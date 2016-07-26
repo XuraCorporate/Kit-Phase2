@@ -69,8 +69,23 @@ for _OLDNET in $(ls /etc/sysconfig/network-scripts/ifcfg-*|grep -v ifcfg-lo)
 do
 	rm -f ${_OLDNET}
 done
+
 netconfig ${_SYSTEMD} _ADMIN_VLAN_ _ADMIN_MAC_ _ADMIN_IP_ _ADMIN_NETMASK_ _ADMIN_GW_
-netconfig ${_SYSTEMD} _SZ_VLAN_ _SZ_MAC_ _SZ_IP_ _SZ_NETMASK_
+
+if [ "_SZ_IP_"x == ""x ]
+   then netconfig ${_SYSTEMD} _SZ_VLAN_ _SZ_MAC_ _SZ_IP_ _SZ_NETMASK_
+fi
+
+if [ "_SIP_IP_"x == ""x ]
+   then netconfig ${_SYSTEMD} _SIP_VLAN_ _SIP_MAC_ _SIP_IP_ _SIP_NETMASK_
+fi
+
+if [ "_MEDIA_IP_"x == ""x ]
+	then netconfig ${_SYSTEMD} _MEDIA_VLAN_ _MEDIA_MAC_ _MEDIA_IP_ _MEDIA_NETMASK_ _MEDIA_GW_
+fi
+
+#netconfig ${_SYSTEMD} _ADMIN_VLAN_ _ADMIN_MAC_ _ADMIN_IP_ _ADMIN_NETMASK_ _ADMIN_GW_
+#netconfig ${_SYSTEMD} _SZ_VLAN_ _SZ_MAC_ _SZ_IP_ _SZ_NETMASK_
 
 cat > /etc/cloud/cloud.cfg.d/99_hostname.cfg << EOF
 #cloud-config

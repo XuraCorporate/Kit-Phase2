@@ -19,7 +19,7 @@ parameters:
     description: Domain Name of the Unit
   antiaffinity_group:
     type: string
-    description: Anti-Affinity Scheduler Group ID
+    description: (Anti-)Affinity Scheduler Group ID
   omu_flavor_name:
     type: string
     description: Flavor Name to be used
@@ -59,7 +59,7 @@ parameters:
     default: none
   sz_network_port:
     type: string
-    description: Port ID on Admin Network
+    description: Port ID on Secure Zone Network
   sz_network_mac:
     type: string
     description: Secure Zone Port Mac Address
@@ -119,7 +119,7 @@ resources:
         #- port: { get_resource: tenant_network_port }
         - port: { get_param: admin_network_port }
         - port: { get_param: sz_network_port }
-      # image: omu_image
+      image: { get_param: omu_image }
       # key_name: { get_param: keypair_name }
       config_drive: true
       user_data_format: RAW
@@ -139,6 +139,8 @@ resources:
             _SZ_VLAN_: { get_param: sz_network_vlan }
             _HOSTNAME_: { get_param: unit_name }
             _DOMAINNAME_: { get_param: domain_name }
+            _SIP_IP_: ""
+            _MEDIA_IP_: ""
             __UNITType__: OMU
             var_snmpManPA1: { get_param: smu1 }
             var_snmpManPA2: { get_param: smu2 }
@@ -157,10 +159,3 @@ resources:
             
             
       scheduler_hints: { group: {get_param: antiaffinity_group } }
-      block_device_mapping_v2:
-        -
-          boot_index: 0
-          delete_on_termination: true
-          device_name: vda
-          image_id: { get_param: omu_image_id }
-          volume_size: 20
