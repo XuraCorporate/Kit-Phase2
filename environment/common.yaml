@@ -1,6 +1,6 @@
 ---
 parameter_defaults:
-  dev_mode: True
+  dev_mode: False
 
   # Deprecated usage of Tenant Network
   # Tenant Network Section
@@ -34,7 +34,7 @@ parameter_defaults:
   sz_network_cidr: "10.107.204.0/24"
   sz_network_netmask: "255.255.255.0"
   # "none" will disable the VLAN configuration, a number between 1 to 4096 will configure the vlan taggin
-  sz_network_vlan: 1234
+  sz_network_vlan: none
 
   # SIP Internal Network Section 
   sip_network_name: "provider-vlan725"
@@ -47,6 +47,7 @@ parameter_defaults:
   media_network_name: "provider-vlan726"
   media_network_cidr: "10.107.206.0/24"
   media_network_netmask: "255.255.255.0"
+  media_network_gateway: "10.107.206.1" # For CMS
   # "none" will disable the VLAN configuration, a number between 1 to 4096 will configure the vlan taggin
   media_network_vlan: none
 
@@ -57,14 +58,46 @@ parameter_defaults:
   asu_flavor_name: m1.small
   mau_flavor_name: m1.small
 
-  # Image Section
+  # Source image to boot, could be "glance" or "cinder" (Local Disk from Cinder is not supported in OpenStack)
+  cms_image_source: glance
+  lvu_image_source: glance
+  omu_image_source: glance
+  vm-asu_image_source: glance
+  mau_image_source: glance
+
+  # Nova and Cinder Availability Zone
+  nova_az: nova
+  cinder_az: nova
+
+  #####
+  # Glance Source Section
+  # *_local_boot: Boot from Local Disk instead of using Cinder for Boot from Volume
+  # *_image_volume_size: Size in GB without the Unit
+  # *_image_id: Glance Image ID
+  # *_image: Glance Image Name
+  ####
+  cms_local_boot: True
+  cms_image_volume_size: 20
   cms_image_id: d7c201ea-77c8-4f85-ab9c-5925da7a7287 #LP: https://bugs.launchpad.net/heat/+bug/1559186
   cms_image: Image_for_Stack_1
+  lvu_local_boot: True
+  lvu_image_volume_size: 20
   lvu_image_id: d7c201ea-77c8-4f85-ab9c-5925da7a7287 #LP: https://bugs.launchpad.net/heat/+bug/1559186
   lvu_image: Image_for_Stack_1
-  omu_image_id: d7c201ea-77c8-4f85-ab9c-5925da7a7287 #LP: https://bugs.launchpad.net/heat/+bug/1559186
-  omu_image: Image_for_Stack_1
+
+  omu_local_boot: True
+  omu_image_id: 6f8509b6-5996-4e60-bf75-7fd4c4acbf0b #LP: https://bugs.launchpad.net/heat/+bug/1559186
+  vm-asu_local_boot: True
+  omu_image: OmuTest2
   asu_image_id: d7c201ea-77c8-4f85-ab9c-5925da7a7287 #LP: https://bugs.launchpad.net/heat/+bug/1559186
   asu_image: Image_for_Stack_1
+  mau_local_boot: True
   mau_image_id: d7c201ea-77c8-4f85-ab9c-5925da7a7287 #LP: https://bugs.launchpad.net/heat/+bug/1559186
   mau_image: Image_for_Stack_1
+  
+  # Aplication Section
+  SystemID: 555
+  BalancerList: ['1.2.3.4','5.6.7.8'] 
+  smu1: '1.1.1.1'
+  smu2: '2.2.2.2'
+  smu_vip: '3.3.3.3'

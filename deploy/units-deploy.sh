@@ -383,10 +383,10 @@ function create_update_omu {
     #####
 	# merge 2 text files
 	#######
-	BashFile=omu_software_config.sh
-	IniFile=globalConf.ini
-	DestFile=script/omu_Application_config.sh
-	perl -e 'open(f1,"<$ARGV[0]");@b=<f1>; close(f1);print @b;open(f2,"<$ARGV[1]");@c=<f2>;close(f2);for $i (@b) {$i =~ s/$ARGV[2]/@c/ ; print $i}' $BashFile  $IniFile __ApplicationConf__ > $DestFile
+	BashFile=../templates/script/omu_software_config.sh
+	IniFile=../templates/script/globalConf.ini
+	DestFile=../templates/script/omu_Application_config.sh
+	perl -e 'open(f1,"<$ARGV[0]");@b=<f1>; close(f1);open(f2,"<$ARGV[1]");@c=<f2>;close(f2);chomp(@c);$d=join("\n",@c);for $i (@b) {$i =~ s/$ARGV[2]/$d/ ; print $i}' $BashFile  $IniFile __ApplicationConf__ > $DestFile
 	if [[ "${_ACTION}" == "Replace" ]]
 	then
 		#####
