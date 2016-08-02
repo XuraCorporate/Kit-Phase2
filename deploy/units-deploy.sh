@@ -387,6 +387,8 @@ function create_update_omu {
 	IniFile=../templates/script/globalConf.ini
 	DestFile=../templates/script/omu_Application_config.sh
 	perl -e 'open(f1,"<$ARGV[0]");@b=<f1>; close(f1);open(f2,"<$ARGV[1]");@c=<f2>;close(f2);chomp(@c);$d=join("\n",@c);for $i (@b) {$i =~ s/$ARGV[2]/$d/ ; print $i}' $BashFile  $IniFile __ApplicationConf__ > $DestFile
+	perl -pi.Orig -e '/<<\s+EOF/ ... /EOF/ and s/([^\\])\$/$1\\\$/g' $DestFile
+	perl -pi.Orig2 -e 's/"ConfFile"/"\$ConfFile"/' $DestFile
 	if [[ "${_ACTION}" == "Replace" ]]
 	then
 		#####

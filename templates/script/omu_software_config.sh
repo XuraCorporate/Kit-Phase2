@@ -117,7 +117,7 @@ ConfFile=/etc/cns/scripts/globalConf.ini
 LogFile=/tmp/ApplicationConfig.log
 UnitType=__UNITType__
 
-cat > "$ConfFile" << EOF
+cat > "ConfFile" << EOF
 __ApplicationConf__
 EOF
 
