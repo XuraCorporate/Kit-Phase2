@@ -386,9 +386,10 @@ function create_update_omu {
 	BashFile=../templates/script/omu_software_config.sh
 	IniFile=../templates/script/globalConf.ini
 	DestFile=../templates/script/omu_Application_config.sh
-	perl -e 'open(f1,"<$ARGV[0]");@b=<f1>; close(f1);open(f2,"<$ARGV[1]");@c=<f2>;close(f2);chomp(@c);$d=join("\n",@c);for $i (@b) {$i =~ s/$ARGV[2]/$d/ ; print $i}' $BashFile  $IniFile __ApplicationConf__ > $DestFile
-	perl -pi.Orig -e '/<<\s+EOF/ ... /EOF/ and s/([^\\])\$/$1\\\$/g' $DestFile
-	perl -pi.Orig2 -e 's/"ConfFile"/"\$ConfFile"/' $DestFile
+	mergeFiles $BashFile  $IniFile  __ApplicationConf__  $DestFile
+	#perl -e 'open(f1,"<$ARGV[0]");@b=<f1>; close(f1);open(f2,"<$ARGV[1]");@c=<f2>;close(f2);chomp(@c);$d=join("\n",@c);for $i (@b) {$i =~ s/$ARGV[2]/$d/ ; print $i}' $BashFile  $IniFile __ApplicationConf__ > $DestFile
+	#perl -pi.Orig -e '/<<\s+EOF/ ... /EOF/ and s/([^\\])\$/$1\\\$/g' $DestFile
+	perl -pi.Orig -e 's/"ConfFile"/"\$ConfFile"/' $DestFile
 	if [[ "${_ACTION}" == "Replace" ]]
 	then
 		#####
@@ -870,6 +871,25 @@ function port_validation {
 		exit_for_error "Error, Port with ID ${_PORT} has a different MAC Address than the one provided into the CSV file." false break
 	fi
 	echo -e "${GREEN} [OK]${NC}"
+}
+
+#####
+# fuction to mege 2 files
+# this function insert the content of second_File into Main_File (replace the Pattern_to_replace) and write the resolt to DestFile
+# Input: Main_File second_File Pattern_to_replace  DestFile
+function mergeFiles {
+	MainFile=$1
+	SecondFile=$2
+	Pattern=$3
+	DestFile=$4
+	if [ "$4" == "" ] || [ "$3" == "" ] || [ "$2" == "" ] || [ "$1" == "" ]
+	then
+	   echo "Error missing parameters to mergeFiles($1,$2,$3,$4)"
+	   exit 1
+	fi
+	perl -e 'open(f1,"<$ARGV[0]");@b=<f1>; close(f1);open(f2,"<$ARGV[1]");@c=<f2>;close(f2);chomp(@c);$d=join("\n",@c);for $i (@b) {$i =~ s/$ARGV[2]/$d/ ; print $i}' $MainFile  $SecondFile $Pattern  \
+	| perl -p -e '/<<\s+EOF/ ... /EOF/ and s/([^\\])\$/$1\\\$/g' > $DestFile
+	 #$DestFile
 }
 
 #####
