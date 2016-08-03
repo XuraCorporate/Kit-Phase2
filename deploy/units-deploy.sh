@@ -272,15 +272,16 @@ function create_update_lvu {
     #####
 	# merge 2 text files
 	#######
-	BashFile=Generic_software_config.sh
-	IniFile=globalConf.ini
-	DestFile=script/lvu_Application_config.sh
+	BashFile=../templates/script/Generic_software_config.sh
+	IniFile=../templates/script/globalConf.ini
+	DestFile=../templates/script/lvu_Application_config.sh
 	mergeFiles $BashFile  $IniFile  __ApplicationConf__  $DestFile
 	perl -pi.Orig -e 's/"ConfFile"/"\$ConfFile"/' $DestFile
         #####
         # Load the CSV Files for all of the Instances
         #####
         if [[ "${_INSTANCEEND}" == "false" ]]
+		then
                 cat ../${_ADMINCSVFILE}|tail -n+${_INSTANCESTART} | sed -e "s/\^M//g" | grep -v "^$" > ../${_ADMINCSVFILE}.tmp
                 cat ../${_SZCSVFILE}|tail -n+${_INSTANCESTART} | sed -e "s/\^M//g" | grep -v "^$" > ../${_SZCSVFILE}.tmp
         else
@@ -616,14 +617,14 @@ function init_omu {
 # Function to Create VM-ASU
 #####
 function create_update_vmasu {
-	 #####
+	#####
 	# merge 2 text files
 	#######
-	BashFile=omu_software_config.sh
-	IniFile=globalConf.ini
-	DestFile=script/vmasu_Application_config.sh
-	perl -e 'open(f1,"<$ARGV[0]");@b=<f1>; close(f1);print @b;open(f2,"<$ARGV[1]");@c=<f2>;close(f2);for $i (@b) {$i =~ s/$ARGV[2]/@c/ ; print $i}' $BashFile  $IniFile __ApplicationConf__ > $DestFile
-	##### Replace with Function ....
+	BashFile=../templates/script/Generic_software_config.sh
+	IniFile=../templates/script/globalConf.ini
+	DestFile=../templates/script/vmasu_Application_config.sh
+	mergeFiles $BashFile  $IniFile  __ApplicationConf__  $DestFile
+	perl -pi.Orig -e 's/"ConfFile"/"\$ConfFile"/' $DestFile
         #####
         # Load the CSV Files for all of the Instances
         #####
@@ -1517,23 +1518,34 @@ echo -e "${GREEN} [OK]${NC}"
 echo -e -n "Verifing (Anti-)Affinity rules ...\t\t"
 _GROUPS=./groups.tmp
 nova server-group-list|grep ServerGroup|sort -k4|awk '{print $4,$2}' > ${_GROUPS}
-_GROUPNUMBER=$(cat ${_GROUPS}|grep ${_UNIT}|wc -l)
-if [[ "${_GROUPNUMBER}" == "0" && "${_ACTION}" != "Delete" && "${_ACTION}" != "List" ]]
+### oops - some issues to verify:
+# 1. Resource group should be created at the preperation stack ....
+# 2. in test lab we do not run the preperation stack so i want to insert all the servers group 
+#    in the Array.
+_DEVMODE=`perl -n -e '/dev_mode.+?(\S+)$/ and print "$1"' environment/common.yaml`
+if [ "$_DEVMODE" == "True" ]
 then
-	exit_for_error "Error, There is any available (Anti-)Affinity Group." false hard
-fi
-_INDEXGROUP=0
-_OLDIFS=$IFS
-while IFS=$'\n' read -r _LINE || [[ -n "$line" ]]
-do
-	_UNITGROUP=$(echo ${_LINE}|awk '{print $1}')
-	_UNITGROUPID=$(echo ${_LINE}|awk '{print $2}')
-	if [[ ${_UNITGROUP} =~ "${_UNIT}" ]]
+	_GROUP[0]=`tail -1 ${_GROUPS}| awk '{print $2}'`
+	_GROUPNUMBER=1
+else
+	_GROUPNUMBER=$(cat ${_GROUPS}|grep ${_UNIT}|wc -l)
+	if [[ "${_GROUPNUMBER}" == "0" && "${_ACTION}" != "Delete" && "${_ACTION}" != "List" ]]
 	then
-		_GROUP[${_INDEXGROUP}]=${_UNITGROUPID}
-		_INDEXGROUP=$((${_INDEXGROUP}+1))
+		exit_for_error "Error, There is any available (Anti-)Affinity Group." false hard
 	fi
-done < ${_GROUPS}
+	_INDEXGROUP=0
+	_OLDIFS=$IFS
+	while IFS=$'\n' read -r _LINE || [[ -n "$line" ]]
+	do
+		_UNITGROUP=$(echo ${_LINE}|awk '{print $1}')
+		_UNITGROUPID=$(echo ${_LINE}|awk '{print $2}')
+		if [[ ${_UNITGROUP} =~ "${_UNIT}" ]]
+		then
+			_GROUP[${_INDEXGROUP}]=${_UNITGROUPID}
+			_INDEXGROUP=$((${_INDEXGROUP}+1))
+		fi
+	done < ${_GROUPS}
+fi
 rm -rf ${_GROUPS}
 IFS=${_OLDIFS}
 echo -e "${GREEN} [OK]${NC}"

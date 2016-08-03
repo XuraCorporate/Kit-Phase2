@@ -101,8 +101,8 @@ parameter_defaults:
   omu_image: OmuTest2
   vm-asu_local_boot: True
   vm-asu_image_volume_size: 20
-  vm-asu_image_id: d7c201ea-77c8-4f85-ab9c-5925da7a7287 #LP: https://bugs.launchpad.net/heat/+bug/1559186
-  vm-asu_image: Image_for_Stack_1
+  vm-asu_image_id: d15d3539-8b35-4f12-a97c-9a65092043d0 #LP: https://bugs.launchpad.net/heat/+bug/1559186
+  vm-asu_image: GoldenImage-Vm-ASU
   mau_local_boot: True
   mau_image_volume_size: 20
   mau_image_id: d7c201ea-77c8-4f85-ab9c-5925da7a7287 #LP: https://bugs.launchpad.net/heat/+bug/1559186

@@ -161,13 +161,14 @@ resources:
             _DOMAINNAME_: { get_param: domain_name }
             _SIP_IP_: ""
             _MEDIA_IP_: ""
-            __UNITType__: VM-ASU
+            __UNITType__: VMASU
             var_snmpManPA1: { get_param: smu1 }
             var_snmpManPA2: { get_param: smu2 }
             var_snmpManager: { get_param: smu_vip }
             var_NtpServer1: { get_param: smu1 }
             var_NtpServer2: { get_param: smu2 }
-            var_BalancerList: { get_param: BalancerList }
+            var_BalancerList: 
+              list_join: [',' ,{ get_param: BalancerList } ]
             var_SystemID: { get_param: SystemID }
             ##############################################
             # the following Parameters are identical to some 

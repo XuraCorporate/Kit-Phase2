@@ -118,7 +118,8 @@ cat > "ConfFile" << EOF
 __ApplicationConf__
 EOF
 
-$PerlCmd "$ParamsCmd" -Conf "$ConfFile" -Unit $UnitType -LogFile "$LogFile"
+#$PerlCmd "$ParamsCmd" -Conf "$ConfFile" -Unit $UnitType -LogFile "$LogFile"
+$ParamsCmd -Conf "$ConfFile" -Unit $UnitType -LogFile "$LogFile"
 /usr/cti/apps/CSPbase/csp_networking.pl --file /usr/cti/conf/swp/networking.xml
 
 exit 0
