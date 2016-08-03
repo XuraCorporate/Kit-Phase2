@@ -10,7 +10,7 @@ NC='\033[0m' # No Color
 function input_error_log {
 	echo -e ${RED}
 	echo "Wrapper for ${_UNIT} Unit Creation"
-	echo "Usage bash $0 <OpenStack RC environment file> <Create/Update/List/Delete/Replace> <CMS/LVU/OMU/VM-ASU/MAU> [Instace to start with or replace to - default 1] [Path to the CSV Files - default "environment/${_UNITLOWER}"] [StackName - default ${_UNITLOWER}]"
+	echo "Usage bash $0 <OpenStack RC environment file> <Create/Update/List/Delete/Replace> <CMS/LVU/OMU/VM-ASU/MAU> [Instance to start with - default 1] [Instance to end with - default false aka continue until the end of the CSV file] [Path to the CSV Files - default "environment/${_UNITLOWER}"] [StackName - default ${_UNITLOWER}]"
 }
 
 #####
@@ -39,6 +39,8 @@ function exit_for_error {
         fi
 	if [[ "${_EXIT}" == "hard" ]]
 	then
+		rm -rf ../${_ADMINCSVFILE}.tmp ../${_SZCSVFILE}.tmp ../${_SIPCSVFILE}.tmp ../${_MEDIACSVFILE}.tmp >/dev/null 2>&1
+		rm -rf ${_ADMINCSVFILE}.tmp ${_SZCSVFILE}.tmp ${_SIPCSVFILE}.tmp ${_MEDIACSVFILE}.tmp >/dev/null 2>&1
 		echo -e "${RED}${_MESSAGE}${NC}"
         	exit 1
 	elif [[ "${_EXIT}" == "break" ]]
@@ -55,24 +57,58 @@ function exit_for_error {
 # Function to Create CMS Unit
 #####
 function create_update_cms {
-	echo "Not yet implemented."
-	
     #####
 	# merge 2 text files
 	#######
-	BashFile=cms_software_config.sh
+	BashFile=Generic_software_config.sh
 	IniFile=globalConf.ini
 	DestFile=script/cms_Application_config.sh
-	perl -e 'open(f1,"<$ARGV[0]");@b=<f1>; close(f1);print @b;open(f2,"<$ARGV[1]");@c=<f2>;close(f2);for $i (@b) {$i =~ s/$ARGV[2]/@c/ ; print $i}' $BashFile  $IniFile __ApplicationConf__ > $DestFile
-	if [[ "${_ACTION}" == "Replace" ]]
+	mergeFiles $BashFile  $IniFile  __ApplicationConf__  $DestFile
+	perl -pi.Orig -e 's/"ConfFile"/"\$ConfFile"/' $DestFile
+	#####
+	# Load the CSV Files for all of the Instances
+	#####
+	if [[ "${_INSTANCEEND}" == "false" ]]
 	then
-		#####
-		# Load the CSV Files
-		#####
-                sed -n -e ${_INSTACE}p ../${_ADMINCSVFILE} | sed -e "s/\^M//g" > ../${_ADMINCSVFILE}.tmp
-                sed -n -e ${_INSTACE}p ../${_SZCSVFILE} | sed -e "s/\^M//g" > ../${_SZCSVFILE}.tmp
-                sed -n -e ${_INSTACE}p ../${_SIPCSVFILE} | sed -e "s/\^M//g" > ../${_SIPCSVFILE}.tmp
-                sed -n -e ${_INSTACE}p ../${_MEDIACSVFILE} | sed -e "s/\^M//g" > ../${_MEDIACSVFILE}.tmp
+                cat ../${_ADMINCSVFILE}|tail -n+${_INSTANCESTART} | sed -e "s/\^M//g" | grep -v "^$" > ../${_ADMINCSVFILE}.tmp
+                cat ../${_SZCSVFILE}|tail -n+${_INSTANCESTART} | sed -e "s/\^M//g" | grep -v "^$" > ../${_SZCSVFILE}.tmp
+                cat ../${_SIPCSVFILE}|tail -n+${_INSTANCESTART} | sed -e "s/\^M//g" | grep -v "^$" > ../${_SIPCSVFILE}.tmp
+                cat ../${_MEDIACSVFILE}|tail -n+${_INSTANCESTART} | sed -e "s/\^M//g" | grep -v "^$" > ../${_MEDIACSVFILE}.tmp
+	else
+                sed -n -e "${_INSTANCESTART},${_INSTANCEEND}p" ../${_ADMINCSVFILE} | sed -e "s/\^M//g" | grep -v "^$" > ../${_ADMINCSVFILE}.tmp
+                sed -n -e "${_INSTANCESTART},${_INSTANCEEND}p" ../${_SZCSVFILE} | sed -e "s/\^M//g" | grep -v "^$" > ../${_SZCSVFILE}.tmp
+                sed -n -e "${_INSTANCESTART},${_INSTANCEEND}p" ../${_SIPCSVFILE} | sed -e "s/\^M//g" | grep -v "^$" > ../${_SIPCSVFILE}.tmp
+                sed -n -e "${_INSTANCESTART},${_INSTANCEEND}p" ../${_MEDIACSVFILE} | sed -e "s/\^M//g" | grep -v "^$" > ../${_MEDIACSVFILE}.tmp
+	fi
+
+        #####
+        # Verify that in the CSV files there are the same amout of Ports
+        #####
+        _ADMIN_PORT_NUMBER=$(cat ../${_ADMINCSVFILE}.tmp|wc -l)
+        _SZ_PORT_NUMBER=$(cat ../${_SZCSVFILE}.tmp|wc -l)
+        _SIP_PORT_NUMBER=$(cat ../${_SIPCSVFILE}.tmp|wc -l)
+        _MEDIA_PORT_NUMBER=$(cat ../${_MEDIACSVFILE}.tmp|wc -l)
+        echo -e -n "Validating number of Ports ...\t\t"
+        if [[ "${_ADMIN_PORT_NUMBER}" != "${_SZ_PORT_NUMBER}" ]]
+        then
+                exit_for_error "Error, Inconsitent port number between Admin, which has ${_ADMIN_PORT_NUMBER} Port(s), and Secure Zone, which has ${_SZ_PORT_NUMBER} Port(s)" true hard
+        fi
+        if [[ "${_ADMIN_PORT_NUMBER}" != "${_SIP_PORT_NUMBER}" ]]
+        then
+                exit_for_error "Error, Inconsitent port number between Admin, which has ${_ADMIN_PORT_NUMBER} Port(s), and SIP, which has ${_SIP_PORT_NUMBER} Port(s)" true hard
+        fi
+        if [[ "${_ADMIN_PORT_NUMBER}" != "${_MEDIA_PORT_NUMBER}" ]]
+        then
+                exit_for_error "Error, Inconsitent port number between Admin, which has ${_ADMIN_PORT_NUMBER} Port(s), and Media, which has ${_MEDIA_PORT_NUMBER} Port(s)" true hard
+        fi
+        echo -e "${GREEN} [OK]${NC}"
+
+
+        if [[ "${_ACTION}" == "Replace" ]]
+        then
+                #####
+                # Load into environment the CSV Files
+                #####
                 IFS=","
                 exec 3<../${_ADMINCSVFILE}.tmp
                 exec 4<../${_SZCSVFILE}.tmp
@@ -83,12 +119,12 @@ function create_update_cms {
                         #####
                         # Delete the old stack
                         #####
-                        heat stack-delete ${_STACKNAME}${_INSTACE} || exit_for_error "Error, During Stack ${_ACTION}." true hard
+                        heat stack-delete ${_STACKNAME}${_INSTANCESTART} || exit_for_error "Error, During Stack ${_ACTION}." true hard
 
                         #####
                         # Wait until has been deleted
                         #####
-                        while :; do heat resource-list ${_STACKNAME}${_INSTACE} >/dev/null 2>&1 || break; done
+                        while :; do heat resource-list ${_STACKNAME}${_INSTANCESTART} >/dev/null 2>&1 || break; done
 
                         #####
                         # Create it again
@@ -96,35 +132,8 @@ function create_update_cms {
                         init_cms Create
                 done
         else
-                cat ../${_ADMINCSVFILE}|tail -n+${_INSTACE} | sed -e "s/\^M//g" > ../${_ADMINCSVFILE}.tmp
-                cat ../${_SZCSVFILE}|tail -n+${_INSTACE} | sed -e "s/\^M//g" > ../${_SZCSVFILE}.tmp
-                cat ../${_SIPCSVFILE}|tail -n+${_INSTACE} | sed -e "s/\^M//g" > ../${_SIPCSVFILE}.tmp
-                cat ../${_MEDIACSVFILE}|tail -n+${_INSTACE} | sed -e "s/\^M//g" > ../${_MEDIACSVFILE}.tmp
-
                 #####
-                # Verify that in the CSV files there are the same amout of Ports
-                #####
-                _ADMIN_PORT_NUMBER=$(cat ../${_ADMINCSVFILE}.tmp|wc -l)
-                _SZ_PORT_NUMBER=$(cat ../${_SZCSVFILE}.tmp|wc -l)
-                _SIP_PORT_NUMBER=$(cat ../${_SIPCSVFILE}.tmp|wc -l)
-                _MEDIA_PORT_NUMBER=$(cat ../${_MEDIACSVFILE}.tmp|wc -l)
-                echo -e -n "Validating number of Ports ...\t\t"
-                if [[ "${_ADMIN_PORT_NUMBER}" != "${_SZ_PORT_NUMBER}" ]]
-                then
-                        exit_for_error "Error, Inconsitent port number between Admin, which has ${_ADMIN_PORT_NUMBER} Port(s), and Secure Zone, which has ${_SZ_PORT_NUMBER} Port(s)" true hard
-                fi
-                if [[ "${_ADMIN_PORT_NUMBER}" != "${_SIP_PORT_NUMBER}" ]]
-                then
-                        exit_for_error "Error, Inconsitent port number between Admin, which has ${_ADMIN_PORT_NUMBER} Port(s), and SIP, which has ${_SIP_PORT_NUMBER} Port(s)" true hard
-                fi
-                if [[ "${_ADMIN_PORT_NUMBER}" != "${_MEDIA_PORT_NUMBER}" ]]
-                then
-                        exit_for_error "Error, Inconsitent port number between Admin, which has ${_ADMIN_PORT_NUMBER} Port(s), and Media, which has ${_MEDIA_PORT_NUMBER} Port(s)" true hard
-                fi
-                echo -e "${GREEN} [OK]${NC}"
-
-                #####
-                # Load the CSV Files
+                # Load into environment the CSV Files
                 #####
                 IFS=","
                 exec 3<../${_ADMINCSVFILE}.tmp
@@ -133,18 +142,31 @@ function create_update_cms {
                 exec 6<../${_MEDIACSVFILE}.tmp
                 while read _ADMIN_PORTID _ADMIN_MAC _ADMIN_IP <&3 && read _SZ_PORTID _SZ_MAC _SZ_IP <&4 && read _SIP_PORTID _SIP_MAC _SIP_IP <&5 && read _MEDIA_PORTID _MEDIA_MAC _MEDIA_IP <&6
                 do
-
-                        #####
-                        # After the checks create the CMS with the right parameters
-                        #####
-                        init_cms ${_ACTION}
+			if [[ "${_ACTION}" != "Delete" ]]
+			then
+				#####
+				# After the checks create the CMS with the right parameters
+				#####
+				init_cms ${_ACTION}
+			else
+			        #####
+			        # Release the port cleaning up the security group
+			        #####
+			        echo "Cleaning up Neutron port"
+			        neutron port-update --no-security-groups ${_ADMIN_PORTID}
+			        #####
+			        # Delete Stack
+			        #####
+				heat stack-$(echo "${_ACTION}" | awk '{print tolower($0)}') ${_STACKNAME}${_INSTANCESTART} || exit_for_error "Error, During Stack ${_ACTION}." true hard
+        			_INSTANCESTART=$(($_INSTANCESTART+1))
+			fi
                 done
         fi
         exec 3<&-
         exec 4<&-
         exec 5<&-
         exec 6<&-
-        rm -f ../${_ADMINCSVFILE}.tmp ../${_SZCSVFILE}.tmp ../${_SIPCSVFILE}.tmp ../${_MEDIACSVFILE}.tmp
+        rm -rf ../${_ADMINCSVFILE}.tmp ../${_SZCSVFILE}.tmp ../${_SIPCSVFILE}.tmp ../${_MEDIACSVFILE}.tmp
 }
 
 #####
@@ -157,25 +179,35 @@ function init_cms {
         # Verify if the stack already exist. A double create will fail
         # Verify if the stack exist in order to be updated
         #####
-        echo -e -n "Verifing if ${_STACKNAME}${_INSTACE} is already loaded ...\t\t"
-        heat resource-list ${_STACKNAME}${_INSTACE} > /dev/null 2>&1
+        echo -e -n "Verifing if ${_STACKNAME}${_INSTANCESTART} is already loaded ...\t\t"
+        heat resource-list ${_STACKNAME}${_INSTANCESTART} > /dev/null 2>&1
         _STATUS=${?}
         if [[ "${_ACTION}" == "Create" && "${_STATUS}" == "0" ]]
         then
-                exit_for_error "Error, The Stack ${_STACKNAME}${_INSTACE} already exist." false soft
+                exit_for_error "Error, The Stack ${_STACKNAME}${_INSTANCESTART} already exist." false soft
         elif [[ "${_ACTION}" == "Update" && "${_STATUS}" != "0" ]]
         then
-                exit_for_error "Error, The Stack ${_STACKNAME}${_INSTACE} does not exist." false soft
+                exit_for_error "Error, The Stack ${_STACKNAME}${_INSTANCESTART} does not exist." false soft
         else
                 echo -e "${GREEN} [OK]${NC}"
 
                 #####
                 # Verify the port status one by one
                 #####
-                port_validation ${_ADMIN_PORTID} ${_ADMIN_MAC}
-                port_validation ${_SZ_PORTID} ${_SZ_MAC}
-                port_validation ${_SIP_PORTID} ${_SIP_MAC}
-                port_validation ${_MEDIA_PORTID} ${_MEDIA_MAC}
+		mac_validation ${_ADMIN_MAC}
+		mac_validation ${_SZ_MAC}
+		mac_validation ${_SIP_MAC}
+		mac_validation ${_MEDIA_MAC}
+
+                port_validation ${_ADMIN_PORTID} ${_ADMIN_MAC} ${_ACTION}
+                port_validation ${_SZ_PORTID} ${_SZ_MAC} ${_ACTION}
+                port_validation ${_SIP_PORTID} ${_SIP_MAC} ${_ACTION}
+                port_validation ${_MEDIA_PORTID} ${_MEDIA_MAC} ${_ACTION}
+
+		ip_validation ${_ADMIN_IP}
+		ip_validation ${_SZ_IP}
+		ip_validation ${_SIP_IP}
+		ip_validation ${_MEDIA_IP}
 
                 #####
                 # Update the port securtiy group
@@ -185,10 +217,6 @@ function init_cms {
                 neutron port-update --no-security-groups ${_SZ_PORTID}
                 neutron port-update --no-security-groups ${_SIP_PORTID}
                 neutron port-update --no-security-groups ${_MEDIA_PORTID}
-		############################
-		#  Todo: 
-		#      1.  Update security group for cms sip / media 
-		#      2.  Change ! Security group of SZ should be specified for each Unit Type. (add to environment Security group per UnitType )
 
                 #####
                 # Load the Stack and pass the following information
@@ -200,7 +228,14 @@ function init_cms {
                 # - (Anti-)Affinity Group ID from the Group Array which is a modulo math operation (%) betweem the Stack number (1..2..3 etc) and the Available anti-affinity Group. 
                 #####
 		_LOCAL_BOOT=$(cat ../environment/common.yaml|awk '/'${_UNITLOWER}'_local_boot/ {print $2}'|awk '{print tolower($0)}')
-		if "${_LOCAL_BOOT}"
+		_SOURCE_BOOT=$(cat ../environment/common.yaml|awk '/'${_UNITLOWER}'_image_source/ {print $2}'|awk '{print tolower($0)}')
+		if [[ "${_LOCAL_BOOT}" == "true" && "${_SOURCE_BOOT}" == "cinder" ]]
+		then
+			exit_for_error "Error, Local Boot using a Volume source is not supported in OpenStack." true hard
+		elif [[ "${_SOURCE_BOOT}" == "cinder" ]]
+		then
+			_HOT="../templates/${_UNITLOWER}_cinder_source.yaml"
+		elif "${_LOCAL_BOOT}" # in this case _SOURCE_BOOT=glance
 		then
 			_HOT="../templates/${_UNITLOWER}.yaml"
 		else
@@ -210,7 +245,7 @@ function init_cms {
                 heat stack-$(echo "${_COMMAND}" | awk '{print tolower($0)}') \
                  --template-file ${_HOT} \
                  --environment-file ../environment/common.yaml \
-                 --parameters "unit_name=${_STACKNAME}${_INSTACE}" \
+                 --parameters "unit_name=${_STACKNAME}${_INSTANCESTART}" \
                  --parameters "admin_network_port=${_ADMIN_PORTID}" \
                  --parameters "admin_network_mac=${_ADMIN_MAC}" \
                  --parameters "admin_network_ip=${_ADMIN_IP}" \
@@ -223,32 +258,52 @@ function init_cms {
                  --parameters "media_network_port=${_MEDIA_PORTID}" \
                  --parameters "media_network_mac=${_MEDIA_MAC}" \
                  --parameters "media_network_ip=${_MEDIA_IP}" \
-                 --parameters "antiaffinity_group=${_GROUP[ $((${_INSTACE}%${_GROUPNUMBER})) ]}" \
-                 ${_STACKNAME}${_INSTACE} || exit_for_error "Error, During Stack ${_ACTION}." true hard
+                 --parameters "antiaffinity_group=${_GROUP[ $((${RANDOM}%${_GROUPNUMBER})) ]}" \
+                 ${_STACKNAME}${_INSTANCESTART} || exit_for_error "Error, During Stack ${_ACTION}." true hard
                 #--parameters "tenant_network_id=${_TENANT_NETWORK_ID}" \
         fi
-        _INSTACE=$(($_INSTACE+1))
+        _INSTANCESTART=$(($_INSTANCESTART+1))
 }
 
-
 #####
-# Function to Create LVU Unit
+# Function to Create LVU
 #####
 function create_update_lvu {
     #####
 	# merge 2 text files
 	#######
-	BashFile=omu_software_config.sh
+	BashFile=Generic_software_config.sh
 	IniFile=globalConf.ini
 	DestFile=script/lvu_Application_config.sh
-	perl -e 'open(f1,"<$ARGV[0]");@b=<f1>; close(f1);print @b;open(f2,"<$ARGV[1]");@c=<f2>;close(f2);for $i (@b) {$i =~ s/$ARGV[2]/@c/ ; print $i}' $BashFile  $IniFile __ApplicationConf__ > $DestFile
-	if [[ "${_ACTION}" == "Replace" ]]
-	then
-		#####
-		# Load the CSV Files
-		#####
-                sed -n -e ${_INSTACE}p ../${_ADMINCSVFILE} | sed -e "s/\^M//g" > ../${_ADMINCSVFILE}.tmp
-                sed -n -e ${_INSTACE}p ../${_SZCSVFILE} | sed -e "s/\^M//g" > ../${_SZCSVFILE}.tmp
+	mergeFiles $BashFile  $IniFile  __ApplicationConf__  $DestFile
+	perl -pi.Orig -e 's/"ConfFile"/"\$ConfFile"/' $DestFile
+        #####
+        # Load the CSV Files for all of the Instances
+        #####
+        if [[ "${_INSTANCEEND}" == "false" ]]
+                cat ../${_ADMINCSVFILE}|tail -n+${_INSTANCESTART} | sed -e "s/\^M//g" | grep -v "^$" > ../${_ADMINCSVFILE}.tmp
+                cat ../${_SZCSVFILE}|tail -n+${_INSTANCESTART} | sed -e "s/\^M//g" | grep -v "^$" > ../${_SZCSVFILE}.tmp
+        else
+                sed -n -e "${_INSTANCESTART},${_INSTANCEEND}p" ../${_ADMINCSVFILE} | sed -e "s/\^M//g" | grep -v "^$" > ../${_ADMINCSVFILE}.tmp
+                sed -n -e "${_INSTANCESTART},${_INSTANCEEND}p" ../${_SZCSVFILE} | sed -e "s/\^M//g" | grep -v "^$" > ../${_SZCSVFILE}.tmp
+        fi
+
+        #####
+        # Verify that in the CSV files there are the same amout of Ports
+        #####
+        _ADMIN_PORT_NUMBER=$(cat ../${_ADMINCSVFILE}.tmp|wc -l)
+        _SZ_PORT_NUMBER=$(cat ../${_SZCSVFILE}.tmp|wc -l)
+        echo -e -n "Validating number of Ports ...\t\t"
+        if [[ "${_ADMIN_PORT_NUMBER}" != "${_SZ_PORT_NUMBER}" ]]
+        then
+                exit_for_error "Error, Inconsitent port number between Admin, which has ${_ADMIN_PORT_NUMBER} Port(s), and Secure Zone, which has ${_SZ_PORT_NUMBER} Port(s)" true hard
+        fi
+        echo -e "${GREEN} [OK]${NC}"
+        if [[ "${_ACTION}" == "Replace" ]]
+        then
+                #####
+                # Load into environment the CSV Files
+                #####
                 IFS=","
                 exec 3<../${_ADMINCSVFILE}.tmp
                 exec 4<../${_SZCSVFILE}.tmp
@@ -257,57 +312,51 @@ function create_update_lvu {
                         #####
                         # Delete the old stack
                         #####
-                        heat stack-delete ${_STACKNAME}${_INSTACE} || exit_for_error "Error, During Stack ${_ACTION}." true hard
+                        heat stack-delete ${_STACKNAME}${_INSTANCESTART} || exit_for_error "Error, During Stack ${_ACTION}." true hard
 
                         #####
                         # Wait until has been deleted
                         #####
-                        while :; do heat resource-list ${_STACKNAME}${_INSTACE} >/dev/null 2>&1 || break; done
+                        while :; do heat resource-list ${_STACKNAME}${_INSTANCESTART} >/dev/null 2>&1 || break; done
 
-
-
-
-			#####
-			# Create it again
-			#####
-			init_lvu Create
-		done
-	else
-                cat ../${_ADMINCSVFILE}|tail -n+${_INSTACE} | sed -e "s/\^M//g" > ../${_ADMINCSVFILE}.tmp
-                cat ../${_SZCSVFILE}|tail -n+${_INSTACE} | sed -e "s/\^M//g" > ../${_SZCSVFILE}.tmp
-
+                        #####
+                        # Create it again
+                        #####
+                        init_lvu Create
+                done
+        else
                 #####
-                # Verify that in the CSV files there are the same amout of Ports
-                #####
-                _ADMIN_PORT_NUMBER=$(cat ../${_ADMINCSVFILE}.tmp|wc -l)
-                _SZ_PORT_NUMBER=$(cat ../${_SZCSVFILE}.tmp|wc -l)
-                echo -e -n "Validating number of Ports ...\t\t"
-                if [[ "${_ADMIN_PORT_NUMBER}" != "${_SZ_PORT_NUMBER}" ]]
-                then
-                        exit_for_error "Error, Inconsitent port number between Admin, which has ${_ADMIN_PORT_NUMBER} Port(s), and Secure Zone, which has ${_SZ_PORT_NUMBER} Port(s)" true hard
-                fi
-                echo -e "${GREEN} [OK]${NC}"
-
-                #####
-                # Load the CSV Files
+                # Load into environment the CSV Files
                 #####
                 IFS=","
                 exec 3<../${_ADMINCSVFILE}.tmp
                 exec 4<../${_SZCSVFILE}.tmp
                 while read _ADMIN_PORTID _ADMIN_MAC _ADMIN_IP <&3 && read _SZ_PORTID _SZ_MAC _SZ_IP <&4
                 do
-
-                        #####
-                        # After the checks create the LVU with the right parameters
-                        #####
-                        init_lvu ${_ACTION}
+                        if [[ "${_ACTION}" != "Delete" ]]
+                        then
+                                #####
+                                # After the checks create the LVU with the right parameters
+                                #####
+                                init_lvu ${_ACTION}
+                        else
+                                #####
+                                # Release the port cleaning up the security group
+                                #####
+                                echo "Cleaning up Neutron port"
+                                neutron port-update --no-security-groups ${_ADMIN_PORTID}
+                                #####
+                                # Delete Stack
+                                #####
+                                heat stack-$(echo "${_ACTION}" | awk '{print tolower($0)}') ${_STACKNAME}${_INSTANCESTART} || exit_for_error "Error, During Stack ${_ACTION}." true hard
+                                _INSTANCESTART=$(($_INSTANCESTART+1))
+                        fi
                 done
         fi
         exec 3<&-
         exec 4<&-
-        rm -f ../${_ADMINCSVFILE}.tmp ../${_SZCSVFILE}.tmp
+        rm -rf ../${_ADMINCSVFILE}.tmp ../${_SZCSVFILE}.tmp
 }
-
 
 #####
 # Function to initialize the creation of the LVU Unit
@@ -319,23 +368,29 @@ function init_lvu {
         # Verify if the stack already exist. A double create will fail
         # Verify if the stack exist in order to be updated
         #####
-        echo -e -n "Verifing if ${_STACKNAME}${_INSTACE} is already loaded ...\t\t"
-        heat resource-list ${_STACKNAME}${_INSTACE} > /dev/null 2>&1
+        echo -e -n "Verifing if ${_STACKNAME}${_INSTANCESTART} is already loaded ...\t\t"
+        heat resource-list ${_STACKNAME}${_INSTANCESTART} > /dev/null 2>&1
         _STATUS=${?}
         if [[ "${_ACTION}" == "Create" && "${_STATUS}" == "0" ]]
         then
-                exit_for_error "Error, The Stack ${_STACKNAME}${_INSTACE} already exist." false soft
+                exit_for_error "Error, The Stack ${_STACKNAME}${_INSTANCESTART} already exist." false soft
         elif [[ "${_ACTION}" == "Update" && "${_STATUS}" != "0" ]]
         then
-                exit_for_error "Error, The Stack ${_STACKNAME}${_INSTACE} does not exist." false soft
+                exit_for_error "Error, The Stack ${_STACKNAME}${_INSTANCESTART} does not exist." false soft
         else
                 echo -e "${GREEN} [OK]${NC}"
 
                 #####
                 # Verify the port status one by one
                 #####
-                port_validation ${_ADMIN_PORTID} ${_ADMIN_MAC}
-                port_validation ${_SZ_PORTID} ${_SZ_MAC}
+                mac_validation ${_ADMIN_MAC}
+                mac_validation ${_SZ_MAC}
+
+                port_validation ${_ADMIN_PORTID} ${_ADMIN_MAC} ${_ACTION}
+                port_validation ${_SZ_PORTID} ${_SZ_MAC} ${_ACTION}
+
+		ip_validation ${_ADMIN_IP}
+		ip_validation ${_SZ_IP}
 
                 #####
                 # Update the port securtiy group
@@ -352,7 +407,14 @@ function init_lvu {
                 # - (Anti-)Affinity Group ID from the Group Array which is a modulo math operation (%) betweem the Stack number (1..2..3 etc) and the Available anti-affinity Group. 
                 #####
                 _LOCAL_BOOT=$(cat ../environment/common.yaml|awk '/'${_UNITLOWER}'_local_boot/ {print $2}'|awk '{print tolower($0)}')
-                if "${_LOCAL_BOOT}"
+                _SOURCE_BOOT=$(cat ../environment/common.yaml|awk '/'${_UNITLOWER}'_image_source/ {print $2}'|awk '{print tolower($0)}')
+                if [[ "${_LOCAL_BOOT}" == "true" && "${_SOURCE_BOOT}" == "cinder" ]]
+                then
+                        exit_for_error "Error, Local Boot using a Volume source is not supported in OpenStack." true hard
+                elif [[ "${_SOURCE_BOOT}" == "cinder" ]]
+                then
+                        _HOT="../templates/${_UNITLOWER}_cinder_source.yaml"
+                elif "${_LOCAL_BOOT}" # in this case _SOURCE_BOOT=glance
                 then
                         _HOT="../templates/${_UNITLOWER}.yaml"
                 else
@@ -362,41 +424,60 @@ function init_lvu {
                 heat stack-$(echo "${_COMMAND}" | awk '{print tolower($0)}') \
                  --template-file ${_HOT} \
                  --environment-file ../environment/common.yaml \
-                 --parameters "unit_name=${_STACKNAME}${_INSTACE}" \
+                 --parameters "unit_name=${_STACKNAME}${_INSTANCESTART}" \
                  --parameters "admin_network_port=${_ADMIN_PORTID}" \
                  --parameters "admin_network_mac=${_ADMIN_MAC}" \
                  --parameters "admin_network_ip=${_ADMIN_IP}" \
                  --parameters "sz_network_port=${_SZ_PORTID}" \
                  --parameters "sz_network_mac=${_SZ_MAC}" \
                  --parameters "sz_network_ip=${_SZ_IP}" \
-                 --parameters "antiaffinity_group=${_GROUP[ $((${_INSTACE}%${_GROUPNUMBER})) ]}" \
-                 ${_STACKNAME}${_INSTACE} || exit_for_error "Error, During Stack ${_ACTION}." true hard
+                 --parameters "antiaffinity_group=${_GROUP[ $((${RANDOM}%${_GROUPNUMBER})) ]}" \
+                 ${_STACKNAME}${_INSTANCESTART} || exit_for_error "Error, During Stack ${_ACTION}." true hard
                 #--parameters "tenant_network_id=${_TENANT_NETWORK_ID}" \
         fi
-        _INSTACE=$(($_INSTACE+1))
+        _INSTANCESTART=$(($_INSTANCESTART+1))
 }
 
 #####
 # Function to Create OMU Unit
 #####
 function create_update_omu {
-    #####
+	#####
 	# merge 2 text files
 	#######
-	BashFile=../templates/script/omu_software_config.sh
+	BashFile=../templates/script/Generic_software_config.sh
 	IniFile=../templates/script/globalConf.ini
 	DestFile=../templates/script/omu_Application_config.sh
 	mergeFiles $BashFile  $IniFile  __ApplicationConf__  $DestFile
-	#perl -e 'open(f1,"<$ARGV[0]");@b=<f1>; close(f1);open(f2,"<$ARGV[1]");@c=<f2>;close(f2);chomp(@c);$d=join("\n",@c);for $i (@b) {$i =~ s/$ARGV[2]/$d/ ; print $i}' $BashFile  $IniFile __ApplicationConf__ > $DestFile
-	#perl -pi.Orig -e '/<<\s+EOF/ ... /EOF/ and s/([^\\])\$/$1\\\$/g' $DestFile
 	perl -pi.Orig -e 's/"ConfFile"/"\$ConfFile"/' $DestFile
+        #####
+        # Load the CSV Files for all of the Instances
+        #####
+        if [[ "${_INSTANCEEND}" == "false" ]]
+        then
+                cat ../${_ADMINCSVFILE}|tail -n+${_INSTANCESTART} | sed -e "s/\^M//g" | grep -v "^$" > ../${_ADMINCSVFILE}.tmp
+                cat ../${_SZCSVFILE}|tail -n+${_INSTANCESTART} | sed -e "s/\^M//g" | grep -v "^$" > ../${_SZCSVFILE}.tmp
+        else
+                sed -n -e "${_INSTANCESTART},${_INSTANCEEND}p" ../${_ADMINCSVFILE} | sed -e "s/\^M//g" | grep -v "^$" > ../${_ADMINCSVFILE}.tmp
+                sed -n -e "${_INSTANCESTART},${_INSTANCEEND}p" ../${_SZCSVFILE} | sed -e "s/\^M//g" | grep -v "^$" > ../${_SZCSVFILE}.tmp
+        fi
+
+        #####
+        # Verify that in the CSV files there are the same amout of Ports
+        #####
+        _ADMIN_PORT_NUMBER=$(cat ../${_ADMINCSVFILE}.tmp|wc -l)
+        _SZ_PORT_NUMBER=$(cat ../${_SZCSVFILE}.tmp|wc -l)
+        echo -e -n "Validating number of Ports ...\t\t"
+        if [[ "${_ADMIN_PORT_NUMBER}" != "${_SZ_PORT_NUMBER}" ]]
+        then
+                exit_for_error "Error, Inconsitent port number between Admin, which has ${_ADMIN_PORT_NUMBER} Port(s), and Secure Zone, which has ${_SZ_PORT_NUMBER} Port(s)" true hard
+        fi
+        echo -e "${GREEN} [OK]${NC}"
 	if [[ "${_ACTION}" == "Replace" ]]
 	then
 		#####
-		# Load the CSV Files
+		# Load into environment the CSV Files
 		#####
-	        sed -n -e ${_INSTACE}p ../${_ADMINCSVFILE} | sed -e "s/\^M//g" > ../${_ADMINCSVFILE}.tmp
-	        sed -n -e ${_INSTACE}p ../${_SZCSVFILE} | sed -e "s/\^M//g" > ../${_SZCSVFILE}.tmp
 	        IFS=","
 	        exec 3<../${_ADMINCSVFILE}.tmp
 	        exec 4<../${_SZCSVFILE}.tmp
@@ -405,12 +486,12 @@ function create_update_omu {
 			#####
 			# Delete the old stack
 			#####
-	                heat stack-delete ${_STACKNAME}${_INSTACE} || exit_for_error "Error, During Stack ${_ACTION}." true hard
+	                heat stack-delete ${_STACKNAME}${_INSTANCESTART} || exit_for_error "Error, During Stack ${_ACTION}." true hard
 
 			#####
 			# Wait until has been deleted
 			#####
-	                while :; do heat resource-list ${_STACKNAME}${_INSTACE} >/dev/null 2>&1 || break; done
+	                while :; do heat resource-list ${_STACKNAME}${_INSTANCESTART} >/dev/null 2>&1 || break; done
 
 			#####
 			# Create it again
@@ -418,39 +499,37 @@ function create_update_omu {
 			init_omu Create
 		done
 	else
-	        cat ../${_ADMINCSVFILE}|tail -n+${_INSTACE} | sed -e "s/\^M//g" > ../${_ADMINCSVFILE}.tmp
-	        cat ../${_SZCSVFILE}|tail -n+${_INSTACE} | sed -e "s/\^M//g" > ../${_SZCSVFILE}.tmp
-
 		#####
-		# Verify that in the CSV files there are the same amout of Ports
-		#####
-		_ADMIN_PORT_NUMBER=$(cat ../${_ADMINCSVFILE}.tmp|wc -l)
-		_SZ_PORT_NUMBER=$(cat ../${_SZCSVFILE}.tmp|wc -l)
-		echo -e -n "Validating number of Ports ...\t\t"
-		if [[ "${_ADMIN_PORT_NUMBER}" != "${_SZ_PORT_NUMBER}" ]]
-		then
-			exit_for_error "Error, Inconsitent port number between Admin, which has ${_ADMIN_PORT_NUMBER} Port(s), and Secure Zone, which has ${_SZ_PORT_NUMBER} Port(s)" true hard
-		fi
-		echo -e "${GREEN} [OK]${NC}"
-
-		#####
-		# Load the CSV Files
+		# Load into environment the CSV Files
 		#####
 	        IFS=","
 	        exec 3<../${_ADMINCSVFILE}.tmp
 	        exec 4<../${_SZCSVFILE}.tmp
 	        while read _ADMIN_PORTID _ADMIN_MAC _ADMIN_IP <&3 && read _SZ_PORTID _SZ_MAC _SZ_IP <&4
 	        do
-
-			#####
-			# After the checks create the OMU with the right parameters
-			#####
-			init_omu ${_ACTION}
+                        if [[ "${_ACTION}" != "Delete" ]]
+                        then
+                                #####
+                                # After the checks create the OMU with the right parameters
+                                #####
+                                init_omu ${_ACTION}
+                        else
+                                #####
+                                # Release the port cleaning up the security group
+                                #####
+                                echo "Cleaning up Neutron port"
+                                neutron port-update --no-security-groups ${_ADMIN_PORTID}
+                                #####
+                                # Delete Stack
+                                #####
+                                heat stack-$(echo "${_ACTION}" | awk '{print tolower($0)}') ${_STACKNAME}${_INSTANCESTART} || exit_for_error "Error, During Stack ${_ACTION}." true hard
+                                _INSTANCESTART=$(($_INSTANCESTART+1))
+                        fi
 	        done
 	fi
 	exec 3<&-
 	exec 4<&-
-	rm -f ../${_ADMINCSVFILE}.tmp ../${_SZCSVFILE}.tmp
+	rm -rf ../${_ADMINCSVFILE}.tmp ../${_SZCSVFILE}.tmp
 }
 
 #####
@@ -463,23 +542,29 @@ function init_omu {
 	# Verify if the stack already exist. A double create will fail
 	# Verify if the stack exist in order to be updated
 	#####
-	echo -e -n "Verifing if ${_STACKNAME}${_INSTACE} is already loaded ...\t\t"
-	heat resource-list ${_STACKNAME}${_INSTACE} > /dev/null 2>&1
+	echo -e -n "Verifing if ${_STACKNAME}${_INSTANCESTART} is already loaded ...\t\t"
+	heat resource-list ${_STACKNAME}${_INSTANCESTART} > /dev/null 2>&1
 	_STATUS=${?}
 	if [[ "${_ACTION}" == "Create" && "${_STATUS}" == "0" ]]
 	then
-                exit_for_error "Error, The Stack ${_STACKNAME}${_INSTACE} already exist." false soft
+                exit_for_error "Error, The Stack ${_STACKNAME}${_INSTANCESTART} already exist." false soft
 	elif [[ "${_ACTION}" == "Update" && "${_STATUS}" != "0" ]]
 	then
-                exit_for_error "Error, The Stack ${_STACKNAME}${_INSTACE} does not exist." false soft
+                exit_for_error "Error, The Stack ${_STACKNAME}${_INSTANCESTART} does not exist." false soft
         else 
 		echo -e "${GREEN} [OK]${NC}"
 
 		#####
 		# Verify the port status one by one
 		#####
-		port_validation ${_ADMIN_PORTID} ${_ADMIN_MAC}
-		port_validation ${_SZ_PORTID} ${_SZ_MAC}
+                mac_validation ${_ADMIN_MAC}
+                mac_validation ${_SZ_MAC}
+
+		port_validation ${_ADMIN_PORTID} ${_ADMIN_MAC} ${_ACTION}
+		port_validation ${_SZ_PORTID} ${_SZ_MAC} ${_ACTION}
+
+		ip_validation ${_ADMIN_IP}
+		ip_validation ${_SZ_IP}
 
 		#####
 		# Update the port securtiy group
@@ -496,7 +581,14 @@ function init_omu {
 		# - (Anti-)Affinity Group ID from the Group Array which is a modulo math operation (%) betweem the Stack number (1..2..3 etc) and the Available anti-affinity Group. 
 		#####
                 _LOCAL_BOOT=$(cat ../environment/common.yaml|awk '/'${_UNITLOWER}'_local_boot/ {print $2}'|awk '{print tolower($0)}')
-                if "${_LOCAL_BOOT}"
+                _SOURCE_BOOT=$(cat ../environment/common.yaml|awk '/'${_UNITLOWER}'_image_source/ {print $2}'|awk '{print tolower($0)}')
+                if [[ "${_LOCAL_BOOT}" == "true" && "${_SOURCE_BOOT}" == "cinder" ]]
+                then
+                        exit_for_error "Error, Local Boot using a Volume source is not supported in OpenStack." true hard
+                elif [[ "${_SOURCE_BOOT}" == "cinder" ]]
+                then
+                        _HOT="../templates/${_UNITLOWER}_cinder_source.yaml"
+                elif "${_LOCAL_BOOT}" # in this case _SOURCE_BOOT=glance
                 then
                         _HOT="../templates/${_UNITLOWER}.yaml"
                 else
@@ -506,22 +598,22 @@ function init_omu {
 		heat stack-$(echo "${_COMMAND}" | awk '{print tolower($0)}') \
 		 --template-file ${_HOT} \
 		 --environment-file ../environment/common.yaml \
-		 --parameters "unit_name=${_STACKNAME}${_INSTACE}" \
+		 --parameters "unit_name=${_STACKNAME}${_INSTANCESTART}" \
 		 --parameters "admin_network_port=${_ADMIN_PORTID}" \
 		 --parameters "admin_network_mac=${_ADMIN_MAC}" \
 		 --parameters "admin_network_ip=${_ADMIN_IP}" \
 		 --parameters "sz_network_port=${_SZ_PORTID}" \
 		 --parameters "sz_network_mac=${_SZ_MAC}" \
 		 --parameters "sz_network_ip=${_SZ_IP}" \
-		 --parameters "antiaffinity_group=${_GROUP[ $((${_INSTACE}%${_GROUPNUMBER})) ]}" \
-		 ${_STACKNAME}${_INSTACE} || exit_for_error "Error, During Stack ${_ACTION}." true hard
+		 --parameters "antiaffinity_group=${_GROUP[ $((${RANDOM}%${_GROUPNUMBER})) ]}" \
+		 ${_STACKNAME}${_INSTANCESTART} || exit_for_error "Error, During Stack ${_ACTION}." true hard
 		#--parameters "tenant_network_id=${_TENANT_NETWORK_ID}" \
 	fi
-	_INSTACE=$(($_INSTACE+1))
+	_INSTANCESTART=$(($_INSTANCESTART+1))
 }
 
 #####
-# Function to Create VM-ASU Unit
+# Function to Create VM-ASU
 #####
 function create_update_vmasu {
 	 #####
@@ -531,13 +623,35 @@ function create_update_vmasu {
 	IniFile=globalConf.ini
 	DestFile=script/vmasu_Application_config.sh
 	perl -e 'open(f1,"<$ARGV[0]");@b=<f1>; close(f1);print @b;open(f2,"<$ARGV[1]");@c=<f2>;close(f2);for $i (@b) {$i =~ s/$ARGV[2]/@c/ ; print $i}' $BashFile  $IniFile __ApplicationConf__ > $DestFile
-	if [[ "${_ACTION}" == "Replace" ]]
-	then
-		#####
-		# Load the CSV Files
-		#####
-                sed -n -e ${_INSTACE}p ../${_ADMINCSVFILE} | sed -e "s/\^M//g" > ../${_ADMINCSVFILE}.tmp
-                sed -n -e ${_INSTACE}p ../${_SZCSVFILE} | sed -e "s/\^M//g" > ../${_SZCSVFILE}.tmp
+	##### Replace with Function ....
+        #####
+        # Load the CSV Files for all of the Instances
+        #####
+        if [[ "${_INSTANCEEND}" == "false" ]]
+        then
+                cat ../${_ADMINCSVFILE}|tail -n+${_INSTANCESTART} | sed -e "s/\^M//g" | grep -v "^$" > ../${_ADMINCSVFILE}.tmp
+                cat ../${_SZCSVFILE}|tail -n+${_INSTANCESTART} | sed -e "s/\^M//g" | grep -v "^$" > ../${_SZCSVFILE}.tmp
+        else
+                sed -n -e "${_INSTANCESTART},${_INSTANCEEND}p" ../${_ADMINCSVFILE} | sed -e "s/\^M//g" | grep -v "^$" > ../${_ADMINCSVFILE}.tmp
+                sed -n -e "${_INSTANCESTART},${_INSTANCEEND}p" ../${_SZCSVFILE} | sed -e "s/\^M//g" | grep -v "^$" > ../${_SZCSVFILE}.tmp
+        fi
+
+        #####
+        # Verify that in the CSV files there are the same amout of Ports
+        #####
+        _ADMIN_PORT_NUMBER=$(cat ../${_ADMINCSVFILE}.tmp|wc -l)
+        _SZ_PORT_NUMBER=$(cat ../${_SZCSVFILE}.tmp|wc -l)
+        echo -e -n "Validating number of Ports ...\t\t"
+        if [[ "${_ADMIN_PORT_NUMBER}" != "${_SZ_PORT_NUMBER}" ]]
+        then
+                exit_for_error "Error, Inconsitent port number between Admin, which has ${_ADMIN_PORT_NUMBER} Port(s), and Secure Zone, which has ${_SZ_PORT_NUMBER} Port(s)" true hard
+        fi
+        echo -e "${GREEN} [OK]${NC}"
+        if [[ "${_ACTION}" == "Replace" ]]
+        then
+                #####
+                # Load into environment the CSV Files
+                #####
                 IFS=","
                 exec 3<../${_ADMINCSVFILE}.tmp
                 exec 4<../${_SZCSVFILE}.tmp
@@ -546,84 +660,85 @@ function create_update_vmasu {
                         #####
                         # Delete the old stack
                         #####
-                        heat stack-delete ${_STACKNAME}${_INSTACE} || exit_for_error "Error, During Stack ${_ACTION}." true hard
+                        heat stack-delete ${_STACKNAME}${_INSTANCESTART} || exit_for_error "Error, During Stack ${_ACTION}." true hard
 
                         #####
                         # Wait until has been deleted
                         #####
-                        while :; do heat resource-list ${_STACKNAME}${_INSTACE} >/dev/null 2>&1 || break; done
+                        while :; do heat resource-list ${_STACKNAME}${_INSTANCESTART} >/dev/null 2>&1 || break; done
 
-
-
-
-			#####
-			# Create it again
-			#####
-			init_asu Create
-		done
-	else
-                cat ../${_ADMINCSVFILE}|tail -n+${_INSTACE} | sed -e "s/\^M//g" > ../${_ADMINCSVFILE}.tmp
-                cat ../${_SZCSVFILE}|tail -n+${_INSTACE} | sed -e "s/\^M//g" > ../${_SZCSVFILE}.tmp
-
+                        #####
+                        # Create it again
+                        #####
+                        init_vmasu Create
+                done
+        else
                 #####
-                # Verify that in the CSV files there are the same amout of Ports
-                #####
-                _ADMIN_PORT_NUMBER=$(cat ../${_ADMINCSVFILE}.tmp|wc -l)
-                _SZ_PORT_NUMBER=$(cat ../${_SZCSVFILE}.tmp|wc -l)
-                echo -e -n "Validating number of Ports ...\t\t"
-                if [[ "${_ADMIN_PORT_NUMBER}" != "${_SZ_PORT_NUMBER}" ]]
-                then
-                        exit_for_error "Error, Inconsitent port number between Admin, which has ${_ADMIN_PORT_NUMBER} Port(s), and Secure Zone, which has ${_SZ_PORT_NUMBER} Port(s)" true hard
-                fi
-                echo -e "${GREEN} [OK]${NC}"
-
-                #####
-                # Load the CSV Files
+                # Load into environment the CSV Files
                 #####
                 IFS=","
                 exec 3<../${_ADMINCSVFILE}.tmp
                 exec 4<../${_SZCSVFILE}.tmp
                 while read _ADMIN_PORTID _ADMIN_MAC _ADMIN_IP <&3 && read _SZ_PORTID _SZ_MAC _SZ_IP <&4
                 do
-
-			#####
-                        # After the checks create the VM-ASU with the right parameters
-			#####
-			init_asu ${_ACTION}
-	        done
-	fi
-	exec 3<&-
-	exec 4<&-
-	rm -f ../${_ADMINCSVFILE}.tmp ../${_SZCSVFILE}.tmp
+                        if [[ "${_ACTION}" != "Delete" ]]
+                        then
+                                #####
+                                # After the checks create the VM-ASU with the right parameters
+                                #####
+                                init_vmasu ${_ACTION}
+                        else
+                                #####
+                                # Release the port cleaning up the security group
+                                #####
+                                echo "Cleaning up Neutron port"
+                                neutron port-update --no-security-groups ${_ADMIN_PORTID}
+                                #####
+                                # Delete Stack
+                                #####
+                                heat stack-$(echo "${_ACTION}" | awk '{print tolower($0)}') ${_STACKNAME}${_INSTANCESTART} || exit_for_error "Error, During Stack ${_ACTION}." true hard
+                                _INSTANCESTART=$(($_INSTANCESTART+1))
+                        fi
+                done
+        fi
+        exec 3<&-
+        exec 4<&-
+        rm -rf ../${_ADMINCSVFILE}.tmp ../${_SZCSVFILE}.tmp
 }
 
 #####
 # Function to initialize the creation of the VM-ASU Unit
 #####
-function init_asu {
-	_COMMAND=${1}
+function init_vmasu {
+        _COMMAND=${1}
 
         #####
         # Verify if the stack already exist. A double create will fail
         # Verify if the stack exist in order to be updated
         #####
-        echo -e -n "Verifing if ${_STACKNAME}${_INSTACE} is already loaded ...\t\t"
-        heat resource-list ${_STACKNAME}${_INSTACE} > /dev/null 2>&1
+        echo -e -n "Verifing if ${_STACKNAME}${_INSTANCESTART} is already loaded ...\t\t"
+        heat resource-list ${_STACKNAME}${_INSTANCESTART} > /dev/null 2>&1
         _STATUS=${?}
         if [[ "${_ACTION}" == "Create" && "${_STATUS}" == "0" ]]
         then
-                exit_for_error "Error, The Stack ${_STACKNAME}${_INSTACE} already exist." false soft
+                exit_for_error "Error, The Stack ${_STACKNAME}${_INSTANCESTART} already exist." false soft
         elif [[ "${_ACTION}" == "Update" && "${_STATUS}" != "0" ]]
         then
-                exit_for_error "Error, The Stack ${_STACKNAME}${_INSTACE} does not exist." false soft
+                exit_for_error "Error, The Stack ${_STACKNAME}${_INSTANCESTART} does not exist." false soft
         else
                 echo -e "${GREEN} [OK]${NC}"
 
                 #####
                 # Verify the port status one by one
                 #####
-                port_validation ${_ADMIN_PORTID} ${_ADMIN_MAC}
-                port_validation ${_SZ_PORTID} ${_SZ_MAC}
+                mac_validation ${_ADMIN_MAC}
+                mac_validation ${_SZ_MAC}
+
+                port_validation ${_ADMIN_PORTID} ${_ADMIN_MAC} ${_ACTION}
+                port_validation ${_SZ_PORTID} ${_SZ_MAC} ${_ACTION}
+
+                ip_validation ${_ADMIN_IP}
+                ip_validation ${_SZ_IP}
 
                 #####
                 # Update the port securtiy group
@@ -640,7 +755,14 @@ function init_asu {
                 # - (Anti-)Affinity Group ID from the Group Array which is a modulo math operation (%) betweem the Stack number (1..2..3 etc) and the Available anti-affinity Group. 
                 #####
                 _LOCAL_BOOT=$(cat ../environment/common.yaml|awk '/'${_UNITLOWER}'_local_boot/ {print $2}'|awk '{print tolower($0)}')
-                if "${_LOCAL_BOOT}"
+                _SOURCE_BOOT=$(cat ../environment/common.yaml|awk '/'${_UNITLOWER}'_image_source/ {print $2}'|awk '{print tolower($0)}')
+                if [[ "${_LOCAL_BOOT}" == "true" && "${_SOURCE_BOOT}" == "cinder" ]]
+                then
+                        exit_for_error "Error, Local Boot using a Volume source is not supported in OpenStack." true hard
+                elif [[ "${_SOURCE_BOOT}" == "cinder" ]]
+                then
+                        _HOT="../templates/${_UNITLOWER}_cinder_source.yaml"
+                elif "${_LOCAL_BOOT}" # in this case _SOURCE_BOOT=glance
                 then
                         _HOT="../templates/${_UNITLOWER}.yaml"
                 else
@@ -650,30 +772,39 @@ function init_asu {
                 heat stack-$(echo "${_COMMAND}" | awk '{print tolower($0)}') \
                  --template-file ${_HOT} \
                  --environment-file ../environment/common.yaml \
-                 --parameters "unit_name=${_STACKNAME}${_INSTACE}" \
+                 --parameters "unit_name=${_STACKNAME}${_INSTANCESTART}" \
                  --parameters "admin_network_port=${_ADMIN_PORTID}" \
                  --parameters "admin_network_mac=${_ADMIN_MAC}" \
                  --parameters "admin_network_ip=${_ADMIN_IP}" \
                  --parameters "sz_network_port=${_SZ_PORTID}" \
                  --parameters "sz_network_mac=${_SZ_MAC}" \
                  --parameters "sz_network_ip=${_SZ_IP}" \
-                 --parameters "antiaffinity_group=${_GROUP[ $((${_INSTACE}%${_GROUPNUMBER})) ]}" \
-                 ${_STACKNAME}${_INSTACE} || exit_for_error "Error, During Stack ${_ACTION}." true hard
+                 --parameters "antiaffinity_group=${_GROUP[ $((${RANDOM}%${_GROUPNUMBER})) ]}" \
+                 ${_STACKNAME}${_INSTANCESTART} || exit_for_error "Error, During Stack ${_ACTION}." true hard
                 #--parameters "tenant_network_id=${_TENANT_NETWORK_ID}" \
         fi
-        _INSTACE=$(($_INSTACE+1))
+        _INSTANCESTART=$(($_INSTANCESTART+1))
 }
 
 #####
-# Function to Create MAU Unit
+# Function to Create MAU
 #####
 function create_update_mau {
+        #####
+        # Load the CSV Files for all of the Instances
+        #####
+        if [[ "${_INSTANCEEND}" == "false" ]]
+        then
+                cat ../${_ADMINCSVFILE}|tail -n+${_INSTANCESTART} | sed -e "s/\^M//g" | grep -v "^$" > ../${_ADMINCSVFILE}.tmp
+        else
+                sed -n -e "${_INSTANCESTART},${_INSTANCEEND}p" ../${_ADMINCSVFILE} | sed -e "s/\^M//g" | grep -v "^$" > ../${_ADMINCSVFILE}.tmp
+        fi
+
         if [[ "${_ACTION}" == "Replace" ]]
         then
                 #####
-                # Load the CSV Files
+                # Load into environment the CSV Files
                 #####
-                sed -n -e ${_INSTACE}p ../${_ADMINCSVFILE} | sed -e "s/\^M//g" > ../${_ADMINCSVFILE}.tmp
                 IFS=","
                 exec 3<../${_ADMINCSVFILE}.tmp
                 while read _ADMIN_PORTID _ADMIN_MAC _ADMIN_IP <&3
@@ -681,12 +812,12 @@ function create_update_mau {
                         #####
                         # Delete the old stack
                         #####
-                        heat stack-delete ${_STACKNAME}${_INSTACE} || exit_for_error "Error, During Stack ${_ACTION}." true hard
+                        heat stack-delete ${_STACKNAME}${_INSTANCESTART} || exit_for_error "Error, During Stack ${_ACTION}." true hard
 
                         #####
                         # Wait until has been deleted
                         #####
-                        while :; do heat resource-list ${_STACKNAME}${_INSTACE} >/dev/null 2>&1 || break; done
+                        while :; do heat resource-list ${_STACKNAME}${_INSTANCESTART} >/dev/null 2>&1 || break; done
 
                         #####
                         # Create it again
@@ -694,24 +825,35 @@ function create_update_mau {
                         init_mau Create
                 done
         else
-                cat ../${_ADMINCSVFILE}|tail -n+${_INSTACE} | sed -e "s/\^M//g" > ../${_ADMINCSVFILE}.tmp
-
                 #####
-                # Load the CSV Files
+                # Load into environment the CSV Files
                 #####
                 IFS=","
                 exec 3<../${_ADMINCSVFILE}.tmp
                 while read _ADMIN_PORTID _ADMIN_MAC _ADMIN_IP <&3
                 do
-
-                        #####
-                        # After the checks create the MAU with the right parameters
-                        #####
-                        init_mau ${_ACTION}
+                        if [[ "${_ACTION}" != "Delete" ]]
+                        then
+                                #####
+                                # After the checks create the MAU with the right parameters
+                                #####
+                                init_mau ${_ACTION}
+                        else
+                                #####
+                                # Release the port cleaning up the security group
+                                #####
+                                echo "Cleaning up Neutron port"
+                                neutron port-update --no-security-groups ${_ADMIN_PORTID}
+                                #####
+                                # Delete Stack
+                                #####
+                                heat stack-$(echo "${_ACTION}" | awk '{print tolower($0)}') ${_STACKNAME}${_INSTANCESTART} || exit_for_error "Error, During Stack ${_ACTION}." true hard
+                                _INSTANCESTART=$(($_INSTANCESTART+1))
+                        fi
                 done
         fi
         exec 3<&-
-        rm -f ../${_ADMINCSVFILE}.tmp
+        rm -rf ../${_ADMINCSVFILE}.tmp
 }
 
 #####
@@ -724,22 +866,26 @@ function init_mau {
         # Verify if the stack already exist. A double create will fail
         # Verify if the stack exist in order to be updated
         #####
-        echo -e -n "Verifing if ${_STACKNAME}${_INSTACE} is already loaded ...\t\t"
-        heat resource-list ${_STACKNAME}${_INSTACE} > /dev/null 2>&1
+        echo -e -n "Verifing if ${_STACKNAME}${_INSTANCESTART} is already loaded ...\t\t"
+        heat resource-list ${_STACKNAME}${_INSTANCESTART} > /dev/null 2>&1
         _STATUS=${?}
         if [[ "${_ACTION}" == "Create" && "${_STATUS}" == "0" ]]
         then
-                exit_for_error "Error, The Stack ${_STACKNAME}${_INSTACE} already exist." false soft
+                exit_for_error "Error, The Stack ${_STACKNAME}${_INSTANCESTART} already exist." false soft
         elif [[ "${_ACTION}" == "Update" && "${_STATUS}" != "0" ]]
         then
-                exit_for_error "Error, The Stack ${_STACKNAME}${_INSTACE} does not exist." false soft
+                exit_for_error "Error, The Stack ${_STACKNAME}${_INSTANCESTART} does not exist." false soft
         else
                 echo -e "${GREEN} [OK]${NC}"
 
                 #####
                 # Verify the port status one by one
                 #####
-                port_validation ${_ADMIN_PORTID} ${_ADMIN_MAC}
+                mac_validation ${_ADMIN_MAC}
+
+                port_validation ${_ADMIN_PORTID} ${_ADMIN_MAC} ${_ACTION}
+
+                ip_validation ${_ADMIN_IP}
 
                 #####
                 # Update the port securtiy group
@@ -754,7 +900,14 @@ function init_mau {
                 # - (Anti-)Affinity Group ID from the Group Array which is a modulo math operation (%) betweem the Stack number (1..2..3 etc) and the Available anti-affinity Group. 
                 #####
                 _LOCAL_BOOT=$(cat ../environment/common.yaml|awk '/'${_UNITLOWER}'_local_boot/ {print $2}'|awk '{print tolower($0)}')
-                if "${_LOCAL_BOOT}"
+                _SOURCE_BOOT=$(cat ../environment/common.yaml|awk '/'${_UNITLOWER}'_image_source/ {print $2}'|awk '{print tolower($0)}')
+                if [[ "${_LOCAL_BOOT}" == "true" && "${_SOURCE_BOOT}" == "cinder" ]]
+                then
+                        exit_for_error "Error, Local Boot using a Volume source is not supported in OpenStack." true hard
+                elif [[ "${_SOURCE_BOOT}" == "cinder" ]]
+                then
+                        _HOT="../templates/${_UNITLOWER}_cinder_source.yaml"
+                elif "${_LOCAL_BOOT}" # in this case _SOURCE_BOOT=glance
                 then
                         _HOT="../templates/${_UNITLOWER}.yaml"
                 else
@@ -764,15 +917,15 @@ function init_mau {
                 heat stack-$(echo "${_COMMAND}" | awk '{print tolower($0)}') \
                  --template-file ${_HOT} \
                  --environment-file ../environment/common.yaml \
-                 --parameters "unit_name=${_STACKNAME}${_INSTACE}" \
+                 --parameters "unit_name=${_STACKNAME}${_INSTANCESTART}" \
                  --parameters "admin_network_port=${_ADMIN_PORTID}" \
                  --parameters "admin_network_mac=${_ADMIN_MAC}" \
                  --parameters "admin_network_ip=${_ADMIN_IP}" \
-                 --parameters "antiaffinity_group=${_GROUP[ $((${_INSTACE}%${_GROUPNUMBER})) ]}" \
-                 ${_STACKNAME}${_INSTACE} || exit_for_error "Error, During Stack ${_ACTION}." true hard
+                 --parameters "antiaffinity_group=${_GROUP[ $((${RANDOM}%${_GROUPNUMBER})) ]}" \
+                 ${_STACKNAME}${_INSTANCESTART} || exit_for_error "Error, During Stack ${_ACTION}." true hard
                 #--parameters "tenant_network_id=${_TENANT_NETWORK_ID}" \
         fi
-        _INSTACE=$(($_INSTACE+1))
+        _INSTANCESTART=$(($_INSTANCESTART+1))
 }
 
 #####
@@ -781,23 +934,81 @@ function init_mau {
 # - Given Image Name and Image ID
 #####
 function validation {
-	_UNITTOVALIDATE=$1
-	_IMAGE=$(cat ../environment/common.yaml|grep "$(echo "${_UNITTOVALIDATE}" | awk '{print tolower($0)}')_image"|grep -v image_id|awk '{print $2}'|sed "s/\"//g")
-	_IMAGEID=$(cat ../environment/common.yaml|awk '/'$(echo "${_UNITTOVALIDATE}" | awk '{print tolower($0)}')_image_id'/ {print $2}'|sed "s/\"//g")
-	_FLAVOR=$(cat ../environment/common.yaml|awk '/'$(echo "${_UNITTOVALIDATE}" | awk '{print tolower($0)}')_flavor_name'/ {print $2}'|sed "s/\"//g")
+	_UNITTOBEVALIDATED=$1
+	_IMAGE=$(cat ../environment/common.yaml|grep "$(echo "${_UNITTOBEVALIDATED}" | awk '{print tolower($0)}')_image"|grep -v -E "image_id|image_source|image_volume_size"|awk '{print $2}'|sed "s/\"//g")
+	_IMAGEID=$(cat ../environment/common.yaml|awk '/'$(echo "${_UNITTOBEVALIDATED}" | awk '{print tolower($0)}')_image_id'/ {print $2}'|sed "s/\"//g")
+	_VOLUMEID=$(cat ../environment/common.yaml|awk '/'$(echo "${_UNITTOBEVALIDATED}" | awk '{print tolower($0)}')_volume_id'/ {print $2}'|sed "s/\"//g")
+	_FLAVOR=$(cat ../environment/common.yaml|awk '/'$(echo "${_UNITTOBEVALIDATED}" | awk '{print tolower($0)}')_flavor_name'/ {print $2}'|sed "s/\"//g")
+	_SOURCE=$(cat ../environment/common.yaml|grep "$(echo "${_UNITTOBEVALIDATED}" | awk '{print tolower($0)}')_image_source"|awk '{print $2}'|sed "s/\"//g")
 
 	#####
-	# Check the Image Id and the Image Name is the same 
+	# _SOURCE=glance -> Check the Image Id and the Image Name is the same 
+	# _SOURCE=cinder -> Check the Volume Id, the Given size and if the Volume snapshot/clone feature is present 
 	#####
-	echo -e -n "Validating chosen Image ${_IMAGE} ...\t\t"
-	glance image-show ${_IMAGEID}|grep "${_IMAGE}" >/dev/null 2>&1 || exit_for_error "Error, Image for Unit ${_UNITTOVALIDATE} not present or mismatch between ID and Name." true hard
-	echo -e "${GREEN} [OK]${NC}"
+	if [[ "${_SOURCE}" == "glance" ]]
+	then
+		if $(cat ../environment/common.yaml|awk '/'${_UNITLOWER}'_local_boot/ {print $2}'|awk '{print tolower($0)}')
+		then
+			echo -e "${GREEN}The Unit ${_UNITTOBEVALIDATED} will boot from the local hypervisor disk (aka Ephemeral Disk)${NC}"
+		else
+			echo -e "${GREEN}The Unit ${_UNITTOBEVALIDATED} will boot from Volume (aka from the SAN)${NC}"
+		fi
+		echo -e -n "Validating chosen Glance Image ${_IMAGE} ...\t\t"
+		glance image-show ${_IMAGEID}|grep "${_IMAGE}" >/dev/null 2>&1 || exit_for_error "Error, Image for Unit ${_UNITTOBEVALIDATED} not present or mismatch between ID and Name." true hard
+		echo -e "${GREEN} [OK]${NC}"
+	elif [[ "${_SOURCE}" == "cinder" ]]
+	then
+		echo -e "${GREEN}The Unit ${_UNITTOBEVALIDATED} will boot from Volume (aka from the SAN)${NC}"
+		echo -e -n "Validating chosen Cinder Volume ${_VOLUMEID} ...\t\t"
+		cinder show ${_VOLUMEID} >/dev/null 2>&1 || exit_for_error "Error, Volume for Unit ${_UNITTOBEVALIDATED} not present." true hard
+		echo -e "${GREEN} [OK]${NC}"
+
+		echo -e -n "Validating given volume size ...\t\t"
+		_VOLUME_SIZE=$(cinder show ${_VOLUMEID}|awk '/size/ {print $4}'|sed "s/ //g")
+		_VOLUME_GIVEN_SIZE=$(cat ../environment/common.yaml|awk '/'$(echo "${_UNITTOBEVALIDATED}" | awk '{print tolower($0)}')_volume_size'/ {print $2}'|sed "s/\"//g")
+		if (( "${_VOLUME_GIVEN_SIZE}" < "${_VOLUME_SIZE}" ))
+		then
+			exit_for_error "Error, Volume for Unit ${_UNITTOBEVALIDATED} with UUID ${_VOLUMEID} has a size of ${_VOLUME_SIZE} which cannot fit into the given input size of ${_VOLUME_GIVEN_SIZE}." true hard
+		fi
+		echo -e "${GREEN} [OK]${NC}"
+
+		#####
+		# Creating a test volume to verify that the snapshotting works
+		# https://wiki.openstack.org/wiki/CinderSupportMatrix
+		# e.g. Feature not available with standard NFS driver
+		#####
+		echo -e -n "Validating if volume cloning/snapshotting feature is available ...\t\t"
+		#####
+		# Creating a new volume from the given one
+		#####
+		cinder create --source-volid ${_VOLUMEID} --display-name "temp-${_VOLUMEID}" ${_VOLUME_SIZE} >/dev/null 2>&1 || exit_for_error "Error, During volume cloning/snapshotting. With the current Cinder's backend Glance has to be used." true hard
+		
+		#####
+		# Wait until the volume created is in error or available states
+		#####
+		while :
+		do
+			_VOLUME_SOURCE_STATUS=$(cinder show temp-${_VOLUMEID}|grep status|grep -v extended_status|awk '{print $4}')
+			if [[ "${_VOLUME_SOURCE_STATUS}" == "available" ]]
+			then
+				cinder delete temp-${_VOLUMEID} >/dev/null 2>&1
+				echo -e "${GREEN} [OK]${NC}"
+				break
+			elif [[ "${_VOLUME_SOURCE_STATUS}" == "error" ]]
+			then
+				cinder delete temp-${_VOLUMEID} >/dev/null 2>&1
+				exit_for_error "Error, the system does not support volume cloning/snapshotting. With the current Cinder's backend Glance has to be used." true hard
+			fi
+		done
+	else
+		exit_for_error "Error, Invalid Image Source option, can be \"glance\" or \"cinder\"." true hard
+	fi
 
 	#####
 	# Check the given flavor is available
 	#####
 	echo -e -n "Validating chosen Flavor ${_FLAVOR} ...\t\t"
-	nova flavor-show "${_FLAVOR}" >/dev/null 2>&1 || exit_for_error "Error, Flavor for Unit ${_UNITTOVALIDATE} not present." true hard
+	nova flavor-show "${_FLAVOR}" >/dev/null 2>&1 || exit_for_error "Error, Flavor for Unit ${_UNITTOBEVALIDATED} not present." true hard
 	echo -e "${GREEN} [OK]${NC}"
 }
 
@@ -807,7 +1018,7 @@ function validation {
 # - Does the given VLAN ID is valid?
 #####
 function net_validation {
-        _UNITTOVALIDATE=$1
+        _UNITTOBEVALIDATED=$1
 	_NET=$2
         _NETWORK=$(cat ../environment/common.yaml|awk '/'${_NET}'_network_name/ {print $2}'|sed "s/\"//g")
         _VLAN=$(cat ../environment/common.yaml|awk '/'${_NET}'_network_vlan/ {print $2}'|sed "s/\"//g")
@@ -844,6 +1055,7 @@ function net_validation {
 function port_validation {
 	_PORT=$1
 	_MAC=$2
+	_UNITACTION=$3
 
 	#####
 	# Check of the port exist
@@ -856,7 +1068,7 @@ function port_validation {
 	# Check if the port is in use
 	#####
 	echo -e -n "Validating Port ${_PORT} is not in use ...\t\t"
-	if [[ "$(neutron port-show --field device_id --format value ${_PORT})" != "" ]]
+	if [[ "$(neutron port-show --field device_id --format value ${_PORT})" != "" && "${_UNITACTION}" != "Update" ]]
 	then
 		exit_for_error "Error, Port with ID ${_PORT} is in use." false break
 	fi
@@ -873,6 +1085,53 @@ function port_validation {
 	echo -e "${GREEN} [OK]${NC}"
 }
 
+function ip_validation {
+        _IP=$1
+
+#####
+        # Check if the given IP or NetMask is valid
+        #####
+        echo -e -n "Validating IP Address ${_IP} ...\t\t"
+	echo ${_IP}|grep -E "[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}" >/dev/null 2>&1
+        if [[ "${?}" != "0" ]]
+        then
+                exit_for_error "Error, The Address ${_IP} is not valid." true hard
+        fi
+	if (( "$(echo ${_IP}|awk -F "." '{print $1}')" < "1" || "$(echo ${_IP}|awk -F "." '{print $1}')" > "255" ))
+        then
+                exit_for_error "Error, The Address ${_IP} is not valid." true hard
+        fi
+	if (( "$(echo ${_IP}|awk -F "." '{print $2}')" < "0" || "$(echo ${_IP}|awk -F "." '{print $2}')" > "255" ))
+        then
+                exit_for_error "Error, The Address ${_IP} is not valid." true hard
+        fi
+	if (( "$(echo ${_IP}|awk -F "." '{print $3}')" < "0" || "$(echo ${_IP}|awk -F "." '{print $3}')" > "255" ))
+        then
+                exit_for_error "Error, The Address ${_IP} is not valid." true hard
+        fi
+	if (( "$(echo ${_IP}|awk -F "." '{print $4}')" < "0" || "$(echo ${_IP}|awk -F "." '{print $4}')" > "255" ))
+        then
+                exit_for_error "Error, The Address ${_IP} is not valid." true hard
+        fi
+        echo -e "${GREEN} [OK]${NC}"
+
+}
+
+function mac_validation {
+        _MAC=$1
+
+        #####
+        # Check if the given IP or NetMask is valid
+        #####
+        echo -e -n "Validating MAC Address ${_MAC} ...\t\t"
+        echo ${_MAC}|grep -E "([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})" >/dev/null 2>&1
+        if [[ "${?}" != "0" ]]
+        then
+                exit_for_error "Error, The Port Mac Address ${_MAC} is not valid." true hard
+        fi
+        echo -e "${GREEN} [OK]${NC}"
+
+}
 #####
 # fuction to mege 2 files
 # this function insert the content of second_File into Main_File (replace the Pattern_to_replace) and write the resolt to DestFile
@@ -889,7 +1148,6 @@ function mergeFiles {
 	fi
 	perl -e 'open(f1,"<$ARGV[0]");@b=<f1>; close(f1);open(f2,"<$ARGV[1]");@c=<f2>;close(f2);chomp(@c);$d=join("\n",@c);for $i (@b) {$i =~ s/$ARGV[2]/$d/ ; print $i}' $MainFile  $SecondFile $Pattern  \
 	| perl -p -e '/<<\s+EOF/ ... /EOF/ and s/([^\\])\$/$1\\\$/g' > $DestFile
-	 #$DestFile
 }
 
 #####
@@ -899,9 +1157,10 @@ _RCFILE=$1
 _ACTION=$2
 _UNIT=$3
 _UNITLOWER=$(echo "${_UNIT}" | awk '{print tolower($0)}')
-_INSTACE=${4-1}
-_CSVFILEPATH=${5-environment/${_UNITLOWER}}
-_STACKNAME=${6-${_UNITLOWER}}
+_INSTANCESTART=${4-1}
+[[ "${5}" != "" ]] && _INSTANCEEND=${5} || _INSTANCEEND=false
+_CSVFILEPATH=${6-environment/${_UNITLOWER}}
+_STACKNAME=${7-${_UNITLOWER}}
 
 #####
 # Verity if any input values are present
@@ -936,7 +1195,7 @@ then
 	echo "\"Update\" - To update the stack ${_STACKNAME}"
 	echo "\"List\" - To list the resource in the stack ${_STACKNAME}"
 	echo "\"Delete\" - To delete the stack ${_STACKNAME} - WARNING cannot be reversed!"
-	echo "\"Replace\" - To replace a specific stack - This will delete it and then recreate it"
+	echo "\"Replace\" - To replace the stack - This deletes it and then will recreate it from scratch"
         echo -e ${NC}
 	exit 1
 fi
@@ -959,6 +1218,28 @@ then
 fi
 
 #####
+# Check instance to start
+# Check instance to end
+#####
+echo ${_INSTANCESTART}|grep -E "[0-9]{1,99}" > /dev/null 2>&1
+if [[ "${?}" != "0" ]]
+then
+	input_error_log
+	echo "Error, Not valid Instance to Start with."
+        echo -e ${NC}
+	exit 1
+fi
+
+echo ${_INSTANCEEND}|grep -E "[0-9]{1,99}" > /dev/null 2>&1
+if [[ "${?}" != "0" && ${_INSTANCEEND} != "false" ]]
+then
+	input_error_log
+	echo "Error, Not valid Instance to End with."
+        echo -e ${NC}
+	exit 1
+fi
+
+#####
 # Just write into variables the CSV Files
 #####
 _ADMINCSVFILE=$(echo ${_CSVFILEPATH}/admin.csv)
@@ -971,6 +1252,8 @@ _MEDIACSVFILE=$(echo ${_CSVFILEPATH}/media.csv)
 # - Does it exist?
 # - Is it readable?
 # - Does it have a size higher than 0Byte?
+# - Does it have the given starting line?
+# - Does it have the given ending line?
 #####
 echo -e -n "Verifing if Admin CSV file is good ...\t\t"
 if [ ! -f ${_ADMINCSVFILE} ] || [ ! -r ${_ADMINCSVFILE} ] || [ ! -s ${_ADMINCSVFILE} ]
@@ -983,27 +1266,76 @@ then
 fi
 echo -e "${GREEN} [OK]${NC}"
 
+echo -e -n "Verifing if Admin CSV file has the given starting line ${_INSTANCESTART} ...\t\t"
+if [[ "$(sed -n -e "${_INSTANCESTART}p" ${_ADMINCSVFILE} | sed -e "s/\^M//g" | grep -v "^$")" == "" ]]
+then
+	echo -e "${RED}"
+	echo "Wrapper for ${_UNIT} Unit Creation"
+	echo "CSV File for Admin Network does not have the given starting line"
+	echo -e "${NC}"
+	exit 1
+fi
+echo -e "${GREEN} [OK]${NC}"
+
+if [[ "${_INSTANCEEND}" != "false" ]]
+then
+	echo -e -n "Verifing if Admin CSV file has the given ending line ${_INSTANCEEND} ...\t\t"
+	if [[ "$(sed -n -e "${_INSTANCEEND}p" ${_ADMINCSVFILE} | sed -e "s/\^M//g" | grep -v "^$")" == "" ]]
+	then
+		echo -e "${RED}"
+		echo "Wrapper for ${_UNIT} Unit Creation"
+		echo "CSV File for Admin Network does not have the given ending line"
+		echo -e "${NC}"
+		exit 1
+	fi
+	echo -e "${GREEN} [OK]${NC}"
+fi
+
 #####
 # Check if the Secure Zone CSV File except for the MAU Unit
 # - Does it exist?
 # - Is it readable?
 # - Does it have a size higher than 0Byte?
+# - Does it have the given starting line?
+# - Does it have the given ending line?
 #####
 if [[ ! "${_UNIT}" == "MAU" ]]
 then
 	echo -e -n "Verifing if Secure Zone CSV file is good ...\t\t"
-fi
-if [ ! -f ${_SZCSVFILE} ] || [ ! -r ${_SZCSVFILE} ] || [ ! -s ${_SZCSVFILE} ] && [[ ! "${_UNIT}" == "MAU" ]]
-then
-	echo -e "${RED}"
-	echo "Wrapper for ${_UNIT} Unit Creation"
-	echo "CSV File for Secure Zone Network with mapping Portid,MacAddress,FixedIP does not exist."
-	echo -e "${NC}"
-	exit 1
-fi
-if [[ ! "${_UNIT}" == "MAU" ]]
-then
+	if [ ! -f ${_SZCSVFILE} ] || [ ! -r ${_SZCSVFILE} ] || [ ! -s ${_SZCSVFILE} ]
+	then
+		echo -e "${RED}"
+		echo "Wrapper for ${_UNIT} Unit Creation"
+		echo "CSV File for Secure Zone Network with mapping Portid,MacAddress,FixedIP does not exist."
+		echo -e "${NC}"
+		exit 1
+	fi
 	echo -e "${GREEN} [OK]${NC}"
+	
+	echo -e -n "Verifing if Secure Zone CSV file has the given starting line ${_INSTANCESTART} ...\t\t"
+	if [[ "$(sed -n -e "${_INSTANCESTART}p" ${_SZCSVFILE} | sed -e "s/\^M//g" | grep -v "^$")" == "" ]]
+	then
+	        echo -e "${RED}"
+	        echo "Wrapper for ${_UNIT} Unit Creation"
+	        echo "CSV File for Secure Zone does not have the given starting line"
+	        echo -e "${NC}"
+	        exit 1
+	fi
+	echo -e "${GREEN} [OK]${NC}"
+	
+	if [[ "${_INSTANCEEND}" != "false" ]]
+	then
+	        echo -e -n "Verifing if Secure Zone CSV file has the given ending line ${_INSTANCEEND} ...\t\t"
+	        if [[ "$(sed -n -e "${_INSTANCEEND}p" ${_SZCSVFILE} | sed -e "s/\^M//g" | grep -v "^$")" == "" ]]
+	        then
+	                echo -e "${RED}"
+	                echo "Wrapper for ${_UNIT} Unit Creation"
+	                echo "CSV File for Secure Zone Network does not have the given ending line"
+	                echo -e "${NC}"
+	                exit 1
+	        fi
+	        echo -e "${GREEN} [OK]${NC}"
+	fi
 fi
 
 #####
@@ -1011,22 +1343,46 @@ fi
 # - Does it exist?
 # - Is it readable?
 # - Does it have a size higher than 0Byte?
+# - Does it have the given starting line?
+# - Does it have the given ending line?
 #####
 if [[ "${_UNIT}" == "CMS" ]]
 then
 	echo -e -n "Verifing if SIP CSV file is good ...\t\t"
-fi
-if [ ! -f ${_SIPINTCSVFILE} ] || [ ! -r ${_SIPINTCSVFILE} ] || [ ! -s ${_SIPINTCSVFILE} ] && [[ "${_UNIT}" == "CMS" ]]
-then
-	echo -e "${RED}"
-	echo "Wrapper for ${_UNIT} Unit Creation"
-	echo "CSV File for SIP Internal Network with mapping Portid,MacAddress,FixedIP does not exist."
-	echo -e "${NC}"
-	exit 1
-fi
-if [[ "${_UNIT}" == "CMS" ]]
-then
+	if [ ! -f ${_SIPCSVFILE} ] || [ ! -r ${_SIPCSVFILE} ] || [ ! -s ${_SIPCSVFILE} ]
+	then
+		echo -e "${RED}"
+		echo "Wrapper for ${_UNIT} Unit Creation"
+		echo "CSV File for SIP Internal Network with mapping Portid,MacAddress,FixedIP does not exist."
+		echo -e "${NC}"
+		exit 1
+	fi
 	echo -e "${GREEN} [OK]${NC}"
+	
+	echo -e -n "Verifing if SIP CSV file has the given starting line ${_INSTANCESTART} ...\t\t"
+	if [[ "$(sed -n -e "${_INSTANCESTART}p" ${_SIPCSVFILE} | sed -e "s/\^M//g" | grep -v "^$")" == "" ]]
+	then
+	        echo -e "${RED}"
+	        echo "Wrapper for ${_UNIT} Unit Creation"
+	        echo "CSV File for SIP Network does not have the given starting line"
+	        echo -e "${NC}"
+	        exit 1
+	fi
+	echo -e "${GREEN} [OK]${NC}"
+	
+	if [[ "${_INSTANCEEND}" != "false" ]]
+	then
+	        echo -e -n "Verifing if SIP CSV file has the given ending line ${_INSTANCEEND} ...\t\t"
+	        if [[ "$(sed -n -e "${_INSTANCEEND}p" ${_SIPCSVFILE} | sed -e "s/\^M//g" | grep -v "^$")" == "" ]]
+	        then
+	                echo -e "${RED}"
+	                echo "Wrapper for ${_UNIT} Unit Creation"
+	                echo "CSV File for SIP Network does not have the given ending line"
+	                echo -e "${NC}"
+	                exit 1
+	        fi
+	        echo -e "${GREEN} [OK]${NC}"
+	fi
 fi
 
 #####
@@ -1034,23 +1390,89 @@ fi
 # - Does it exist?
 # - Is it readable?
 # - Does it have a size higher than 0Byte?
+# - Does it have the given starting line?
+# - Does it have the given ending line?
 #####
 if [[ "${_UNIT}" == "CMS" ]]
 then
 	echo -e -n "Verifing if Media CSV file is good ...\t\t"
-fi
-if [ ! -f ${_MEDIACSVFILE} ] || [ ! -r ${_MEDIACSVFILE} ] || [ ! -s ${_MEDIACSVFILE} ] && [[ "${_UNIT}" == "CMS" ]]
-then
-	echo -e "${RED}"
-	echo "Wrapper for ${_UNIT} Unit Creation"
-	echo "CSV File for Media Network with mapping Portid,MacAddress,FixedIP does not exist."
-	echo -e "${NC}"
-	exit 1
-fi
-if [[ "${_UNIT}" == "CMS" ]]
-then
+	if [ ! -f ${_MEDIACSVFILE} ] || [ ! -r ${_MEDIACSVFILE} ] || [ ! -s ${_MEDIACSVFILE} ]
+	then
+		echo -e "${RED}"
+		echo "Wrapper for ${_UNIT} Unit Creation"
+		echo "CSV File for Media Network with mapping Portid,MacAddress,FixedIP does not exist."
+		echo -e "${NC}"
+		exit 1
+	fi
 	echo -e "${GREEN} [OK]${NC}"
+	
+	echo -e -n "Verifing if Media CSV file has the given starting line ${_INSTANCESTART} ...\t\t"
+	if [[ "$(sed -n -e "${_INSTANCESTART}p" ${_MEDIACSVFILE} | sed -e "s/\^M//g" | grep -v "^$")" == "" ]]
+	then
+	        echo -e "${RED}"
+	        echo "Wrapper for ${_UNIT} Unit Creation"
+	        echo "CSV File for Media Network does not have the given starting line"
+	        echo -e "${NC}"
+	        exit 1
+	fi
+	echo -e "${GREEN} [OK]${NC}"
+	
+	if [[ "${_INSTANCEEND}" != "false" ]]
+	then
+	        echo -e -n "Verifing if Media CSV file has the given ending line ${_INSTANCEEND} ...\t\t"
+	        if [[ "$(sed -n -e "${_INSTANCEEND}p" ${_MEDIACSVFILE} | sed -e "s/\^M//g" | grep -v "^$")" == "" ]]
+	        then
+	                echo -e "${RED}"
+	                echo "Wrapper for ${_UNIT} Unit Creation"
+	                echo "CSV File for Media Network does not have the given ending line"
+	                echo -e "${NC}"
+	                exit 1
+	        fi
+	        echo -e "${GREEN} [OK]${NC}"
+	fi
 fi
+
+#####
+# Verify binary
+#####
+_BINS="heat nova neutron glance cinder"
+for _BIN in ${_BINS}
+do
+	echo -e -n "Verifing ${_BIN} binary ...\t\t"
+	which ${_BIN} > /dev/null 2>&1 || exit_for_error "Error, Cannot find python${_BIN}-client." false
+	echo -e "${GREEN} [OK]${NC}"
+done
+echo -e -n "Verifing git binary ...\t\t"
+which git > /dev/null 2>&1 || exit_for_error "Error, Cannot find git and any changes will be commited." false soft
+echo -e "${GREEN} [OK]${NC}"
+
+echo -e -n "Verifing dos2unix binary ...\t\t"
+which git > /dev/null 2>&1 || exit_for_error "Error, Cannot find dos2unix binary, please install it first." false hard
+echo -e "${GREEN} [OK]${NC}"
+
+echo -e -n "Verifing md5sum binary ...\t\t"
+which git > /dev/null 2>&1 || exit_for_error "Error, Cannot find md5sum binary." false hard
+echo -e "${GREEN} [OK]${NC}"
+
+#####
+# Convert every files exept the GITs one
+#####
+echo -e -n "Eventually converting files in Standard Unix format ...\t\t"
+for _FILE in $(find . -not \( -path ./.git -prune \) -type f)
+do
+        _MD5BEFORE=$(md5sum ${_FILE}|awk '{print $1}')
+        dos2unix ${_FILE} >/dev/null 2>&1 || exit_for_error "Error, Cannot convert to Unix format some files" false hard
+        _MD5AFTER=$(md5sum ${_FILE}|awk '{print $1}')
+        #####
+        # Verify the MD5 after and before the dos2unix - eventually commit the changes
+        #####
+        if [[ "${_MD5BEFORE}" != "${_MD5AFTER}" ]]
+        then
+                git add ${_FILE} >/dev/null 2>&1
+                git commit -m "Auto Commit Dos2Unix for file ${_FILE} conversion" >/dev/null 2>&1
+        fi
+done
+echo -e "${GREEN} [OK]${NC}"
 
 #####
 # Unload any previous loaded environment file
@@ -1066,17 +1488,6 @@ done
 echo -e -n "Loading environment file ...\t\t"
 source ${_RCFILE}
 echo -e "${GREEN} [OK]${NC}"
-
-#####
-# Verify binary
-#####
-_BINS="heat nova neutron glance cinder"
-for _BIN in ${_BINS}
-do
-	echo -e -n "Verifing ${_BIN} binary ...\t\t"
-	which ${_BIN} > /dev/null 2>&1 || exit_for_error "Error, Cannot find python${_BIN}-client." false
-	echo -e "${GREEN} [OK]${NC}"
-done
 
 #####
 # Verify if the given credential are valid. This will also check if the use can contact Heat
@@ -1105,17 +1516,26 @@ echo -e "${GREEN} [OK]${NC}"
 #####
 echo -e -n "Verifing (Anti-)Affinity rules ...\t\t"
 _GROUPS=./groups.tmp
-nova server-group-list|grep ServerGroup|sort -k4|awk '{print $2}' > ${_GROUPS}
-_GROUPNUMBER=$(cat ${_GROUPS}|wc -l)
+nova server-group-list|grep ServerGroup|sort -k4|awk '{print $4,$2}' > ${_GROUPS}
+_GROUPNUMBER=$(cat ${_GROUPS}|grep ${_UNIT}|wc -l)
 if [[ "${_GROUPNUMBER}" == "0" && "${_ACTION}" != "Delete" && "${_ACTION}" != "List" ]]
 then
 	exit_for_error "Error, There is any available (Anti-)Affinity Group." false hard
 fi
-for (( i=0 ; i < ${_GROUPNUMBER} ; i++ ))
+_INDEXGROUP=0
+_OLDIFS=$IFS
+while IFS=$'\n' read -r _LINE || [[ -n "$line" ]]
 do
-	_GROUP[${i}]=$(sed -n -e $((${i}+1))p ${_GROUPS})
-done
-rm -f ${_GROUPS}
+	_UNITGROUP=$(echo ${_LINE}|awk '{print $1}')
+	_UNITGROUPID=$(echo ${_LINE}|awk '{print $2}')
+	if [[ ${_UNITGROUP} =~ "${_UNIT}" ]]
+	then
+		_GROUP[${_INDEXGROUP}]=${_UNITGROUPID}
+		_INDEXGROUP=$((${_INDEXGROUP}+1))
+	fi
+done < ${_GROUPS}
+rm -rf ${_GROUPS}
+IFS=${_OLDIFS}
 echo -e "${GREEN} [OK]${NC}"
 
 #####
@@ -1142,32 +1562,7 @@ then
 	done
 	cd ${_CURRENTDIR}
 	exit 0
-elif [[ "${_ACTION}" == "Delete" ]]
-then
-	#####
-	# Delete each Stack of the same Unit
-	#####
-	for _STACKID in $(heat stack-list|awk '/'${_STACKNAME}'/ {print $2}')
-	do
-		heat stack-$(echo "${_ACTION}" | awk '{print tolower($0)}') ${_STACKID} || exit_for_error "Error, During Stack ${_ACTION}." true hard
-	done
-
-	#####
-	# Release the the port cleaning up the security group
-	#####
-	cat ../${_ADMINCSVFILE}|tail -n+${_INSTACE} | sed -e "s/\^M//g" > ../${_ADMINCSVFILE}.tmp
-	IFS=","
-	exec 3<../${_ADMINCSVFILE}.tmp
-	while read _ADMIN_PORTID _ADMIN_MAC _ADMIN_IP <&3
-	do	
-		echo "Cleaning up Neutron port"
-        	neutron port-update --no-security-groups ${_ADMIN_PORTID}
-	done
-	exec 3<&-
-	rm -f ../${_ADMINCSVFILE}.tmp
-	cd ${_CURRENTDIR}
-	exit 0
-elif [[ "${_ACTION}" == "Create" || "${_ACTION}" == "Update" || "${_ACTION}" == "Replace" ]]
+elif [[ "${_ACTION}" == "Create" || "${_ACTION}" == "Update" || "${_ACTION}" == "Replace" || "${_ACTION}" == "Delete" ]]
 then
 	#####
 	# Validate the Input values (falvor, image etc)
@@ -1189,6 +1584,7 @@ then
 		# Validate the network for CMS
 		#####
 		create_update_cms
+		echo -e "${GREEN}DONE${NC}"
 		cd ${_CURRENTDIR}
 		exit 0
 	elif [[ ${_UNIT} == "LVU" ]]
@@ -1203,6 +1599,7 @@ then
 		# Init the LVU Creation
 		#####
 		create_update_lvu
+		echo -e "${GREEN}DONE${NC}"
 		cd ${_CURRENTDIR}
 		exit 0
 	elif [[ ${_UNIT} == "OMU" ]]
@@ -1217,6 +1614,7 @@ then
 		# Ini the OMU Creation
 		#####
 		create_update_omu
+		echo -e "${GREEN}DONE${NC}"
 		cd ${_CURRENTDIR}
 		exit 0
 	elif [[ ${_UNIT} == "VM-ASU" ]]
@@ -1231,6 +1629,7 @@ then
 		# Init the VM-ASU Creation
 		#####
 		create_update_vmasu
+		echo -e "${GREEN}DONE${NC}"
 		cd ${_CURRENTDIR}
 		exit 0
 	elif [[ ${_UNIT} == "MAU" ]]
@@ -1244,10 +1643,12 @@ then
 		# Init the MAU Creation
 		#####
 		create_update_mau
+		echo -e "${GREEN}DONE${NC}"
 		cd ${_CURRENTDIR}
 		exit 0
 	fi
 fi
+echo -e "${GREEN}DONE${NC}"
  
 exit 0
 

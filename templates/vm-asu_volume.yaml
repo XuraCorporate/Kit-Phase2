@@ -23,12 +23,12 @@ parameters:
   vm-asu_flavor_name:
     type: string
     description: Flavor Name to be used
-  vm-asu_image:
-    type: string
-    description: Image Name to be used
   vm-asu_image_id:
     type: string
     description: Image ID to be used - in case of block device mapping
+  vm-asu_image_volume_size:
+    type: number
+    description: Volume size to be used by the image
 #  tenant_network_name:
 #    type: string
 #    description: Tenant Network Name with DHCP
@@ -73,6 +73,9 @@ parameters:
     type: string
     description: Secure Zone Network VLAN ID none will disable the VLAN configuration, a number between 1 to 4096 will configure the vlan taggind
     default: none
+  nova_az:
+    type: string
+    description: Availability Zone for Nova
     
     ###################################################################
     # Application Parameters
@@ -132,6 +135,7 @@ resources:
     properties:
       name: { get_param: unit_name }
       flavor: { get_param: vm-asu_flavor_name }
+      availability_zone: { get_param: nova_az }
       networks:
         #- port: { get_resource: tenant_network_port }
         - port: { get_param: admin_network_port }
@@ -180,4 +184,4 @@ resources:
           delete_on_termination: true
           device_name: vda
           image_id: { get_param: vm-asu_image_id }
-          volume_size: 20
+          volume_size: { get_param: vm-asu_image_volume_size }

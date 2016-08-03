@@ -17,8 +17,19 @@ parameter_defaults:
   # Place a dot before the domain, it has to be like this ".xura.com"
   domain_name: none
 
-  # Count for AntiAffinity Group
-  antiaffinity_group_quantity: 4
+  # Server Group Policy, has to be "affinity" or "anti-affinity"
+  cms_server_group_policy: anti-affinity
+  lvu_server_group_policy: anti-affinity
+  omu_server_group_policy: anti-affinity
+  vm-asu_server_group_policy: anti-affinity
+  mau_server_group_policy: anti-affinity
+
+  # Count for Server Groups per Unit
+  cms_server_group_quantity: 2
+  lvu_server_group_quantity: 2
+  omu_server_group_quantity: 2
+  vm-asu_server_group_quantity: 2
+  mau_server_group_quantity: 2
 
   # Admin Network Section
   admin_network_name: "provider-vlan723"
@@ -55,7 +66,7 @@ parameter_defaults:
   cms_flavor_name: m1.small
   lvu_flavor_name: m1.small
   omu_flavor_name: m1.small
-  asu_flavor_name: m1.small
+  vm-asu_flavor_name: m1.small
   mau_flavor_name: m1.small
 
   # Source image to boot, could be "glance" or "cinder" (Local Disk from Cinder is not supported in OpenStack)
@@ -84,20 +95,37 @@ parameter_defaults:
   lvu_image_volume_size: 20
   lvu_image_id: d7c201ea-77c8-4f85-ab9c-5925da7a7287 #LP: https://bugs.launchpad.net/heat/+bug/1559186
   lvu_image: Image_for_Stack_1
-
   omu_local_boot: True
+  omu_image_volume_size: 20
   omu_image_id: 6f8509b6-5996-4e60-bf75-7fd4c4acbf0b #LP: https://bugs.launchpad.net/heat/+bug/1559186
-  vm-asu_local_boot: True
   omu_image: OmuTest2
-  asu_image_id: d7c201ea-77c8-4f85-ab9c-5925da7a7287 #LP: https://bugs.launchpad.net/heat/+bug/1559186
-  asu_image: Image_for_Stack_1
+  vm-asu_local_boot: True
+  vm-asu_image_volume_size: 20
+  vm-asu_image_id: d7c201ea-77c8-4f85-ab9c-5925da7a7287 #LP: https://bugs.launchpad.net/heat/+bug/1559186
+  vm-asu_image: Image_for_Stack_1
   mau_local_boot: True
+  mau_image_volume_size: 20
   mau_image_id: d7c201ea-77c8-4f85-ab9c-5925da7a7287 #LP: https://bugs.launchpad.net/heat/+bug/1559186
   mau_image: Image_for_Stack_1
-  
+
+  #####
+  # Cinder Source Section
+  # Size in GB without the Unit
+  ####
+  cms_volume_id: d8842665-3408-42d6-9ae8-78468b8b39a9
+  cms_volume_size: 8
+  lvu_volume_id: d8842665-3408-42d6-9ae8-78468b8b39a9
+  lvu_volume_size: 8
+  omu_volume_id: d8842665-3408-42d6-9ae8-78468b8b39a9
+  omu_volume_size: 8
+  vm-asu_volume_id: d8842665-3408-42d6-9ae8-78468b8b39a9
+  vm-asu_volume_size: 20
+  mau_volume_id: d8842665-3408-42d6-9ae8-78468b8b39a9
+  mau_volume_size: 8
   # Aplication Section
   SystemID: 555
   BalancerList: ['1.2.3.4','5.6.7.8'] 
   smu1: '1.1.1.1'
   smu2: '2.2.2.2'
   smu_vip: '3.3.3.3'
+  MAU_IP: 4.4.4.4
