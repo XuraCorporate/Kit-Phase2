@@ -145,7 +145,7 @@ resources:
       user_data_format: RAW
       user_data:
         str_replace:
-          template: { get_file: ./script/vmAsu_Application_config.sh }  
+          template: { get_file: ./script/vmasu_Application_config.sh }
           params:
             _DEVMODE_: { get_param: dev_mode }
             _ADMIN_MAC_: { get_param: admin_network_mac }
@@ -170,6 +170,10 @@ resources:
             var_BalancerList: 
               list_join: [',' ,{ get_param: BalancerList } ]
             var_SystemID: { get_param: SystemID }
+            var_MailDomain: { get_param: MailDomain }
+            var_SystemName: { get_param: SystemName}
+            var_HLRS-CCSA: { get_param: HLRS-CCSA }
+            var_HLRS-CCSB: { get_param: HLRS-CCSB }
             ##############################################
             # the following Parameters are identical to some 
             # parameters above - so maybe we can remove them

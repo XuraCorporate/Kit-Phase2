@@ -161,6 +161,29 @@ resources:
             _SZ_VLAN_: { get_param: sz_network_vlan }
             _HOSTNAME_: { get_param: unit_name }
             _DOMAINNAME_: { get_param: domain_name }
+            _SIP_IP_: ""
+            _MEDIA_IP_: ""
+            __UNITType__: VMASU
+            var_snmpManPA1: { get_param: smu1 }
+            var_snmpManPA2: { get_param: smu2 }
+            var_snmpManager: { get_param: smu_vip }
+            var_NtpServer1: { get_param: smu1 }
+            var_NtpServer2: { get_param: smu2 }
+            var_BalancerList: 
+              list_join: [',' ,{ get_param: BalancerList } ]
+            var_SystemID: { get_param: SystemID }
+            var_MailDomain: { get_param: MailDomain }
+            var_SystemName: { get_param: SystemName}
+            var_HLRS-CCSA: { get_param: HLRS-CCSA }
+            var_HLRS-CCSB: { get_param: HLRS-CCSB }
+            ##############################################
+            # the following Parameters are identical to some 
+            # parameters above - so maybe we can remove them
+            # and change globalConf.ini
+            var_FQDN: { get_param: domain_name }
+            var_localIP1: { get_param: admin_network_ip }
+            var_DefaultGW: { get_param: admin_network_gateway }
+            
       scheduler_hints: { group: {get_param: antiaffinity_group } }
       block_device_mapping_v2:
         -

@@ -23,12 +23,12 @@ parameters:
   cms_flavor_name:
     type: string
     description: Flavor Name to be used
-  cms_image_id:
+  cms_volume_id:
     type: string
-    description: Image ID to be used - in case of block device mapping
-  cms_image_volume_size:
+    description: Volume ID to be used
+  cms_volume_size:
     type: number
-    description: Volume size to be used by the image
+    description: Volume Size to be used
 #  tenant_network_name:
 #    type: string
 #    description: Tenant Network Name with DHCP
@@ -108,6 +108,9 @@ parameters:
   nova_az:
     type: string
     description: Availability Zone for Nova
+  cinder_az:
+    type: string
+    description: Availability Zone for Cinder
 
     ###################################################################
     # Application Parameters
@@ -195,11 +198,17 @@ resources:
             var_FQDN: { get_param: domain_name }
             var_localIP1: { get_param: admin_network_ip }
             var_DefaultGW: { get_param: admin_network_gateway }
-      scheduler_hints: { group: {get_param: antiaffinity_group } }
       block_device_mapping_v2:
         -
           boot_index: 0
           delete_on_termination: true
           device_name: vda
-          image_id: { get_param: cms_image_id }
-          volume_size: { get_param: cms_image_volume_size }
+          volume_id: { get_resource: cms_unit_volume }
+
+  cms_unit_volume:
+    type: OS::Cinder::Volume
+    properties:
+      source_volid: { get_param: cms_volume_id }
+      size: { get_param: cms_volume_size }
+      description: { get_param: unit_name }
+      availability_zone: { get_param: cinder_az }

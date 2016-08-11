@@ -33,7 +33,7 @@ function exit_for_error {
 	# If soft no exit
 	#####
 	_EXIT=${3-hard}
-        if ${_CHANGEDIR}
+        if ${_CHANGEDIR} && [[ "${_EXIT}" == "hard" ]]
         then
                 cd ${_CURRENTDIR}
         fi
@@ -119,7 +119,7 @@ function create_update_cms {
                         #####
                         # Delete the old stack
                         #####
-                        heat stack-delete ${_STACKNAME}${_INSTANCESTART} || exit_for_error "Error, During Stack ${_ACTION}." true hard
+                        heat stack-delete ${_ASSUMEYES} ${_STACKNAME}${_INSTANCESTART} || exit_for_error "Error, During Stack ${_ACTION}." true hard
 
                         #####
                         # Wait until has been deleted
@@ -152,12 +152,13 @@ function create_update_cms {
 			        #####
 			        # Release the port cleaning up the security group
 			        #####
-			        echo "Cleaning up Neutron port"
-			        neutron port-update --no-security-groups ${_ADMIN_PORTID}
+			        echo -e -n "Cleaning up Neutron Port ...\t\t"
+                		port_securitygroupcleanup ${_ADMIN_PORTID} false
+        			echo -e "${GREEN} [OK]${NC}"
 			        #####
 			        # Delete Stack
 			        #####
-				heat stack-$(echo "${_ACTION}" | awk '{print tolower($0)}') ${_STACKNAME}${_INSTANCESTART} || exit_for_error "Error, During Stack ${_ACTION}." true hard
+				heat stack-$(echo "${_ACTION}" | awk '{print tolower($0)}') ${_ASSUMEYES} ${_STACKNAME}${_INSTANCESTART} || exit_for_error "Error, During Stack ${_ACTION}." false soft
         			_INSTANCESTART=$(($_INSTANCESTART+1))
 			fi
                 done
@@ -179,7 +180,7 @@ function init_cms {
         # Verify if the stack already exist. A double create will fail
         # Verify if the stack exist in order to be updated
         #####
-        echo -e -n "Verifing if ${_STACKNAME}${_INSTANCESTART} is already loaded ...\t\t"
+        echo -e -n "Verifying if ${_STACKNAME}${_INSTANCESTART} is already loaded ...\t\t"
         heat resource-list ${_STACKNAME}${_INSTANCESTART} > /dev/null 2>&1
         _STATUS=${?}
         if [[ "${_ACTION}" == "Create" && "${_STATUS}" == "0" ]]
@@ -212,11 +213,25 @@ function init_cms {
                 #####
                 # Update the port securtiy group
                 #####
-                neutron port-update --no-security-groups ${_ADMIN_PORTID}
-                neutron port-update --security-group $(cat ../environment/common.yaml|awk '/admin_security_group_name/ {print $2}') ${_ADMIN_PORTID}
-                neutron port-update --no-security-groups ${_SZ_PORTID}
-                neutron port-update --no-security-groups ${_SIP_PORTID}
-                neutron port-update --no-security-groups ${_MEDIA_PORTID}
+		echo -e -n "Updating Neutron Ports for ${_UNIT} ...\t\t"
+		port_securitygroupcleanup ${_ADMIN_PORTID} false
+		port_securitygroup ${_ADMIN_PORTID} \
+			$(cat ../${_ENV}|awk '/admin_security_group_enabled/ {print $2}'|awk '{print tolower($0)}') \
+			$(cat ../${_ENV}|awk '/admin_security_group_name/ {print $2}') \
+			true # This is a true since in production this port will be VIRTIO
+		port_securitygroup ${_SZ_PORTID} \
+			$(cat ../${_ENV}|awk '/sz_security_group_enabled/ {print $2}'|awk '{print tolower($0)}') \
+			$(cat ../${_ENV}|awk '/sz_security_group_name/ {print $2}') \
+			false # This is a false since in production this port will be SR-IOV
+		port_securitygroup ${_SIP_PORTID} \
+			$(cat ../${_ENV}|awk '/sip_security_group_enabled/ {print $2}'|awk '{print tolower($0)}') \
+			$(cat ../${_ENV}|awk '/sip_security_group_name/ {print $2}') \
+			false # This is a false since in production this port will be SR-IOV
+		port_securitygroup ${_MEDIA_PORTID} \
+			$(cat ../${_ENV}|awk '/media_security_group_enabled/ {print $2}'|awk '{print tolower($0)}') \
+			$(cat ../${_ENV}|awk '/media_security_group_name/ {print $2}') \
+			false # This is a false since in production this port will be SR-IOV
+                echo -e "${GREEN} [OK]${NC}"
 
                 #####
                 # Load the Stack and pass the following information
@@ -227,25 +242,52 @@ function init_cms {
                 # - Hostname
                 # - (Anti-)Affinity Group ID from the Group Array which is a modulo math operation (%) betweem the Stack number (1..2..3 etc) and the Available anti-affinity Group. 
                 #####
-		_LOCAL_BOOT=$(cat ../environment/common.yaml|awk '/'${_UNITLOWER}'_local_boot/ {print $2}'|awk '{print tolower($0)}')
-		_SOURCE_BOOT=$(cat ../environment/common.yaml|awk '/'${_UNITLOWER}'_image_source/ {print $2}'|awk '{print tolower($0)}')
+		echo -e -n "Identifying the right HOT to be used ...\t\t"
+		_LOCAL_BOOT=$(cat ../${_ENV}|awk '/'${_UNITLOWER}'_local_boot/ {print $2}'|awk '{print tolower($0)}')
+		_SOURCE_BOOT=$(cat ../${_ENV}|awk '/'${_UNITLOWER}'_image_source/ {print $2}'|awk '{print tolower($0)}')
+		_SERVER_GROUP=$(cat ../${_ENV}|awk '/'${_UNITLOWER}'_server_group_enable/ {print $2}'|awk '{print tolower($0)}')
 		if [[ "${_LOCAL_BOOT}" == "true" && "${_SOURCE_BOOT}" == "cinder" ]]
 		then
 			exit_for_error "Error, Local Boot using a Volume source is not supported in OpenStack." true hard
-		elif [[ "${_SOURCE_BOOT}" == "cinder" ]]
+		elif [[ ${_SERVER_GROUP} != "true" && ${_SERVER_GROUP} != "false" ]]
 		then
-			_HOT="../templates/${_UNITLOWER}_cinder_source.yaml"
+			exit_for_error "Error, Server Group parameters ${_UNITLOWER}_server_group_enable can be only \"true\" or \"false\"." true hard
+		fi	
+
+		if [[ "${_SOURCE_BOOT}" == "cinder" ]]
+		then
+			_HOT="../templates/${_UNITLOWER}_cinder_source"
 		elif "${_LOCAL_BOOT}" # in this case _SOURCE_BOOT=glance
 		then
-			_HOT="../templates/${_UNITLOWER}.yaml"
+			_HOT="../templates/${_UNITLOWER}"
 		else
-			_HOT="../templates/${_UNITLOWER}_volume.yaml"
+			_HOT="../templates/${_UNITLOWER}_volume"
 		fi
 
+		if [[ "${_ACTION}" == "Create" ]] && ${_SERVER_GROUP}
+		then
+			_SERVER_GROUP_ID=${_GROUP[ $((${RANDOM}%${_GROUPNUMBER})) ]}
+		elif [[ "${_ACTION}" == "Create" ]] && ! ${_SERVER_GROUP} # in this case _SERVER_GROUP=false
+		then
+			_HOT=$(echo ${_HOT}_no_server_group)
+		elif [[ "${_ACTION}" == "Update" ]] # In this case an update might delete the running VM so cannot be put in a new/different server group
+		then
+			_SERVER_GROUP_ID=$(nova server-group-list|grep $(heat resource-list ${_STACKNAME}${_INSTANCESTART}|grep "OS::Nova::Server"|awk '{print $4}')|awk '{print $2}')
+			if [[ "${_SERVER_GROUP_ID}" == "" ]] && ${_SERVER_GROUP}
+			then
+				echo -e -n "${YELLOW} Warning, the Stack ${_STACKNAME}${_INSTANCESTART} has been created without Server Groups so it will keep not using them.${NC}"
+				_HOT=$(echo ${_HOT}_no_server_group)
+			fi
+		fi
+
+		_HOT=$(echo ${_HOT}.yaml)
+                echo -e "${GREEN} [OK]${NC}"
+
+        	_LINES=$(cat ../${_ADMINCSVFILE}.tmp|wc -l)
                 heat stack-$(echo "${_COMMAND}" | awk '{print tolower($0)}') \
                  --template-file ${_HOT} \
-                 --environment-file ../environment/common.yaml \
-                 --parameters "unit_name=${_STACKNAME}${_INSTANCESTART}" \
+                 --environment-file ../${_ENV} \
+                 --parameters "unit_name=$(cat ../${_ENV}|awk '/'${_UNITLOWER}'_unit_name/ {print $2}')$(printf "%0*d\n" $((${#_LINES}+1)) ${_INSTANCESTART})" \
                  --parameters "admin_network_port=${_ADMIN_PORTID}" \
                  --parameters "admin_network_mac=${_ADMIN_MAC}" \
                  --parameters "admin_network_ip=${_ADMIN_IP}" \
@@ -258,7 +300,7 @@ function init_cms {
                  --parameters "media_network_port=${_MEDIA_PORTID}" \
                  --parameters "media_network_mac=${_MEDIA_MAC}" \
                  --parameters "media_network_ip=${_MEDIA_IP}" \
-                 --parameters "antiaffinity_group=${_GROUP[ $((${RANDOM}%${_GROUPNUMBER})) ]}" \
+                 --parameters "antiaffinity_group=${_SERVER_GROUP_ID}" \
                  ${_STACKNAME}${_INSTANCESTART} || exit_for_error "Error, During Stack ${_ACTION}." true hard
                 #--parameters "tenant_network_id=${_TENANT_NETWORK_ID}" \
         fi
@@ -281,7 +323,7 @@ function create_update_lvu {
         # Load the CSV Files for all of the Instances
         #####
         if [[ "${_INSTANCEEND}" == "false" ]]
-		then
+        then
                 cat ../${_ADMINCSVFILE}|tail -n+${_INSTANCESTART} | sed -e "s/\^M//g" | grep -v "^$" > ../${_ADMINCSVFILE}.tmp
                 cat ../${_SZCSVFILE}|tail -n+${_INSTANCESTART} | sed -e "s/\^M//g" | grep -v "^$" > ../${_SZCSVFILE}.tmp
         else
@@ -313,7 +355,7 @@ function create_update_lvu {
                         #####
                         # Delete the old stack
                         #####
-                        heat stack-delete ${_STACKNAME}${_INSTANCESTART} || exit_for_error "Error, During Stack ${_ACTION}." true hard
+                        heat stack-delete ${_ASSUMEYES} ${_STACKNAME}${_INSTANCESTART} || exit_for_error "Error, During Stack ${_ACTION}." true hard
 
                         #####
                         # Wait until has been deleted
@@ -344,12 +386,13 @@ function create_update_lvu {
                                 #####
                                 # Release the port cleaning up the security group
                                 #####
-                                echo "Cleaning up Neutron port"
-                                neutron port-update --no-security-groups ${_ADMIN_PORTID}
+                                echo -e -n "Cleaning up Neutron Port ...\t\t"
+                                port_securitygroupcleanup ${_ADMIN_PORTID} false
+				echo -e "${GREEN} [OK]${NC}"
                                 #####
                                 # Delete Stack
                                 #####
-                                heat stack-$(echo "${_ACTION}" | awk '{print tolower($0)}') ${_STACKNAME}${_INSTANCESTART} || exit_for_error "Error, During Stack ${_ACTION}." true hard
+                                heat stack-$(echo "${_ACTION}" | awk '{print tolower($0)}') ${_ASSUMEYES} ${_STACKNAME}${_INSTANCESTART} || exit_for_error "Error, During Stack ${_ACTION}." false soft
                                 _INSTANCESTART=$(($_INSTANCESTART+1))
                         fi
                 done
@@ -369,7 +412,7 @@ function init_lvu {
         # Verify if the stack already exist. A double create will fail
         # Verify if the stack exist in order to be updated
         #####
-        echo -e -n "Verifing if ${_STACKNAME}${_INSTANCESTART} is already loaded ...\t\t"
+        echo -e -n "Verifying if ${_STACKNAME}${_INSTANCESTART} is already loaded ...\t\t"
         heat resource-list ${_STACKNAME}${_INSTANCESTART} > /dev/null 2>&1
         _STATUS=${?}
         if [[ "${_ACTION}" == "Create" && "${_STATUS}" == "0" ]]
@@ -396,9 +439,17 @@ function init_lvu {
                 #####
                 # Update the port securtiy group
                 #####
-                neutron port-update --no-security-groups ${_ADMIN_PORTID}
-                neutron port-update --security-group $(cat ../environment/common.yaml|awk '/admin_security_group_name/ {print $2}') ${_ADMIN_PORTID}
-                neutron port-update --no-security-groups ${_SZ_PORTID}
+                echo -e -n "Updating Neutron Ports for ${_UNIT} ...\t\t"
+                port_securitygroupcleanup ${_ADMIN_PORTID} false
+                port_securitygroup ${_ADMIN_PORTID} \
+                        $(cat ../${_ENV}|awk '/admin_security_group_enabled/ {print $2}'|awk '{print tolower($0)}') \
+                        $(cat ../${_ENV}|awk '/admin_security_group_name/ {print $2}') \
+                        true # This is a true since in production this port will be VIRTIO
+                port_securitygroup ${_SZ_PORTID} \
+                        $(cat ../${_ENV}|awk '/sz_security_group_enabled/ {print $2}'|awk '{print tolower($0)}') \
+                        $(cat ../${_ENV}|awk '/sz_security_group_name/ {print $2}') \
+                        false # This is a false since in production this port will be SR-IOV
+                echo -e "${GREEN} [OK]${NC}"
 
                 #####
                 # Load the Stack and pass the following information
@@ -407,32 +458,59 @@ function init_lvu {
                 # - Hostname
                 # - (Anti-)Affinity Group ID from the Group Array which is a modulo math operation (%) betweem the Stack number (1..2..3 etc) and the Available anti-affinity Group. 
                 #####
-                _LOCAL_BOOT=$(cat ../environment/common.yaml|awk '/'${_UNITLOWER}'_local_boot/ {print $2}'|awk '{print tolower($0)}')
-                _SOURCE_BOOT=$(cat ../environment/common.yaml|awk '/'${_UNITLOWER}'_image_source/ {print $2}'|awk '{print tolower($0)}')
+		echo -e -n "Identifying the right HOT to be used ...\t\t"
+                _LOCAL_BOOT=$(cat ../${_ENV}|awk '/'${_UNITLOWER}'_local_boot/ {print $2}'|awk '{print tolower($0)}')
+                _SOURCE_BOOT=$(cat ../${_ENV}|awk '/'${_UNITLOWER}'_image_source/ {print $2}'|awk '{print tolower($0)}')
+                _SERVER_GROUP=$(cat ../${_ENV}|awk '/'${_UNITLOWER}'_server_group_enable/ {print $2}'|awk '{print tolower($0)}')
                 if [[ "${_LOCAL_BOOT}" == "true" && "${_SOURCE_BOOT}" == "cinder" ]]
                 then
                         exit_for_error "Error, Local Boot using a Volume source is not supported in OpenStack." true hard
-                elif [[ "${_SOURCE_BOOT}" == "cinder" ]]
+                elif [[ ${_SERVER_GROUP} != "true" && ${_SERVER_GROUP} != "false" ]]
                 then
-                        _HOT="../templates/${_UNITLOWER}_cinder_source.yaml"
-                elif "${_LOCAL_BOOT}" # in this case _SOURCE_BOOT=glance
-                then
-                        _HOT="../templates/${_UNITLOWER}.yaml"
-                else
-                        _HOT="../templates/${_UNITLOWER}_volume.yaml"
+                        exit_for_error "Error, Server Group parameters ${_UNITLOWER}_server_group_enable can be only \"true\" or \"false\"." true hard
                 fi
 
+                if [[ "${_SOURCE_BOOT}" == "cinder" ]]
+                then
+                        _HOT="../templates/${_UNITLOWER}_cinder_source"
+                elif "${_LOCAL_BOOT}" # in this case _SOURCE_BOOT=glance
+                then
+                        _HOT="../templates/${_UNITLOWER}"
+                else
+                        _HOT="../templates/${_UNITLOWER}_volume"
+                fi
+
+                if [[ "${_ACTION}" == "Create" ]] && ${_SERVER_GROUP}
+                then
+                        _SERVER_GROUP_ID=${_GROUP[ $((${RANDOM}%${_GROUPNUMBER})) ]}
+                elif [[ "${_ACTION}" == "Create" ]] && ! ${_SERVER_GROUP} # in this case _SERVER_GROUP=false
+                then
+                        _HOT=$(echo ${_HOT}_no_server_group)
+                elif [[ "${_ACTION}" == "Update" ]] # In this case an update might delete the running VM so cannot be put in a new/different server group
+                then
+                        _SERVER_GROUP_ID=$(nova server-group-list|grep $(heat resource-list ${_STACKNAME}${_INSTANCESTART}|grep "OS::Nova::Server"|awk '{print $4}')|awk '{print $2}')
+                        if [[ "${_SERVER_GROUP_ID}" == "" ]]
+                        then
+				echo -e -n "${YELLOW} Warning, the Stack ${_STACKNAME}${_INSTANCESTART} has been created without Server Groups so it will keep not using them.${NC}"
+                                _HOT=$(echo ${_HOT}_no_server_group)
+                        fi
+                fi
+
+                _HOT=$(echo ${_HOT}.yaml)
+                echo -e "${GREEN} [OK]${NC}"
+
+        	_LINES=$(cat ../${_ADMINCSVFILE}.tmp|wc -l)
                 heat stack-$(echo "${_COMMAND}" | awk '{print tolower($0)}') \
                  --template-file ${_HOT} \
-                 --environment-file ../environment/common.yaml \
-                 --parameters "unit_name=${_STACKNAME}${_INSTANCESTART}" \
+                 --environment-file ../${_ENV} \
+                 --parameters "unit_name=$(cat ../${_ENV}|awk '/'${_UNITLOWER}'_unit_name/ {print $2}')$(printf "%0*d\n" $((${#_LINES}+1)) ${_INSTANCESTART})" \
                  --parameters "admin_network_port=${_ADMIN_PORTID}" \
                  --parameters "admin_network_mac=${_ADMIN_MAC}" \
                  --parameters "admin_network_ip=${_ADMIN_IP}" \
                  --parameters "sz_network_port=${_SZ_PORTID}" \
                  --parameters "sz_network_mac=${_SZ_MAC}" \
                  --parameters "sz_network_ip=${_SZ_IP}" \
-                 --parameters "antiaffinity_group=${_GROUP[ $((${RANDOM}%${_GROUPNUMBER})) ]}" \
+                 --parameters "antiaffinity_group=${_SERVER_GROUP_ID}" \
                  ${_STACKNAME}${_INSTANCESTART} || exit_for_error "Error, During Stack ${_ACTION}." true hard
                 #--parameters "tenant_network_id=${_TENANT_NETWORK_ID}" \
         fi
@@ -487,7 +565,7 @@ function create_update_omu {
 			#####
 			# Delete the old stack
 			#####
-	                heat stack-delete ${_STACKNAME}${_INSTANCESTART} || exit_for_error "Error, During Stack ${_ACTION}." true hard
+	                heat stack-delete ${_ASSUMEYES} ${_STACKNAME}${_INSTANCESTART} || exit_for_error "Error, During Stack ${_ACTION}." true hard
 
 			#####
 			# Wait until has been deleted
@@ -518,12 +596,13 @@ function create_update_omu {
                                 #####
                                 # Release the port cleaning up the security group
                                 #####
-                                echo "Cleaning up Neutron port"
-                                neutron port-update --no-security-groups ${_ADMIN_PORTID}
+                                echo -e -n "Cleaning up Neutron Port ...\t\t"
+                                port_securitygroupcleanup ${_ADMIN_PORTID} false
+                                echo -e "${GREEN} [OK]${NC}"
                                 #####
                                 # Delete Stack
                                 #####
-                                heat stack-$(echo "${_ACTION}" | awk '{print tolower($0)}') ${_STACKNAME}${_INSTANCESTART} || exit_for_error "Error, During Stack ${_ACTION}." true hard
+                                heat stack-$(echo "${_ACTION}" | awk '{print tolower($0)}') ${_ASSUMEYES} ${_STACKNAME}${_INSTANCESTART} || exit_for_error "Error, During Stack ${_ACTION}." false soft
                                 _INSTANCESTART=$(($_INSTANCESTART+1))
                         fi
 	        done
@@ -543,7 +622,7 @@ function init_omu {
 	# Verify if the stack already exist. A double create will fail
 	# Verify if the stack exist in order to be updated
 	#####
-	echo -e -n "Verifing if ${_STACKNAME}${_INSTANCESTART} is already loaded ...\t\t"
+	echo -e -n "Verifying if ${_STACKNAME}${_INSTANCESTART} is already loaded ...\t\t"
 	heat resource-list ${_STACKNAME}${_INSTANCESTART} > /dev/null 2>&1
 	_STATUS=${?}
 	if [[ "${_ACTION}" == "Create" && "${_STATUS}" == "0" ]]
@@ -570,9 +649,17 @@ function init_omu {
 		#####
 		# Update the port securtiy group
 		#####
-		neutron port-update --no-security-groups ${_ADMIN_PORTID}
-		neutron port-update --security-group $(cat ../environment/common.yaml|awk '/admin_security_group_name/ {print $2}') ${_ADMIN_PORTID}
-		neutron port-update --no-security-groups ${_SZ_PORTID}
+                echo -e -n "Updating Neutron Ports for ${_UNIT} ...\t\t"
+                port_securitygroupcleanup ${_ADMIN_PORTID} false
+                port_securitygroup ${_ADMIN_PORTID} \
+                        $(cat ../${_ENV}|awk '/admin_security_group_enabled/ {print $2}'|awk '{print tolower($0)}') \
+                        $(cat ../${_ENV}|awk '/admin_security_group_name/ {print $2}') \
+                        true # This is a true since in production this port will be VIRTIO
+                port_securitygroup ${_SZ_PORTID} \
+                        $(cat ../${_ENV}|awk '/sz_security_group_enabled/ {print $2}'|awk '{print tolower($0)}') \
+                        $(cat ../${_ENV}|awk '/sz_security_group_name/ {print $2}') \
+                        false # This is a false since in production this port will be SR-IOV
+                echo -e "${GREEN} [OK]${NC}"
 
 		#####
 		# Load the Stack and pass the following information
@@ -581,32 +668,59 @@ function init_omu {
 		# - Hostname
 		# - (Anti-)Affinity Group ID from the Group Array which is a modulo math operation (%) betweem the Stack number (1..2..3 etc) and the Available anti-affinity Group. 
 		#####
-                _LOCAL_BOOT=$(cat ../environment/common.yaml|awk '/'${_UNITLOWER}'_local_boot/ {print $2}'|awk '{print tolower($0)}')
-                _SOURCE_BOOT=$(cat ../environment/common.yaml|awk '/'${_UNITLOWER}'_image_source/ {print $2}'|awk '{print tolower($0)}')
+		echo -e -n "Identifying the right HOT to be used ...\t\t"
+                _LOCAL_BOOT=$(cat ../${_ENV}|awk '/'${_UNITLOWER}'_local_boot/ {print $2}'|awk '{print tolower($0)}')
+                _SOURCE_BOOT=$(cat ../${_ENV}|awk '/'${_UNITLOWER}'_image_source/ {print $2}'|awk '{print tolower($0)}')
+                _SERVER_GROUP=$(cat ../${_ENV}|awk '/'${_UNITLOWER}'_server_group_enable/ {print $2}'|awk '{print tolower($0)}')
                 if [[ "${_LOCAL_BOOT}" == "true" && "${_SOURCE_BOOT}" == "cinder" ]]
                 then
                         exit_for_error "Error, Local Boot using a Volume source is not supported in OpenStack." true hard
-                elif [[ "${_SOURCE_BOOT}" == "cinder" ]]
+                elif [[ ${_SERVER_GROUP} != "true" && ${_SERVER_GROUP} != "false" ]]
                 then
-                        _HOT="../templates/${_UNITLOWER}_cinder_source.yaml"
-                elif "${_LOCAL_BOOT}" # in this case _SOURCE_BOOT=glance
-                then
-                        _HOT="../templates/${_UNITLOWER}.yaml"
-                else
-                        _HOT="../templates/${_UNITLOWER}_volume.yaml"
+                        exit_for_error "Error, Server Group parameters ${_UNITLOWER}_server_group_enable can be only \"true\" or \"false\"." true hard
                 fi
 
+                if [[ "${_SOURCE_BOOT}" == "cinder" ]]
+                then
+                        _HOT="../templates/${_UNITLOWER}_cinder_source"
+                elif "${_LOCAL_BOOT}" # in this case _SOURCE_BOOT=glance
+                then
+                        _HOT="../templates/${_UNITLOWER}"
+                else
+                        _HOT="../templates/${_UNITLOWER}_volume"
+                fi
+
+                if [[ "${_ACTION}" == "Create" ]] && ${_SERVER_GROUP}
+                then
+                        _SERVER_GROUP_ID=${_GROUP[ $((${RANDOM}%${_GROUPNUMBER})) ]}
+                elif [[ "${_ACTION}" == "Create" ]] && ! ${_SERVER_GROUP} # in this case _SERVER_GROUP=false
+                then
+                        _HOT=$(echo ${_HOT}_no_server_group)
+                elif [[ "${_ACTION}" == "Update" ]] # In this case an update might delete the running VM so cannot be put in a new/different server group
+                then
+                        _SERVER_GROUP_ID=$(nova server-group-list|grep $(heat resource-list ${_STACKNAME}${_INSTANCESTART}|grep "OS::Nova::Server"|awk '{print $4}')|awk '{print $2}')
+                        if [[ "${_SERVER_GROUP_ID}" == "" ]]
+                        then
+				echo -e -n "${YELLOW} Warning, the Stack ${_STACKNAME}${_INSTANCESTART} has been created without Server Groups so it will keep not using them.${NC}"
+                                _HOT=$(echo ${_HOT}_no_server_group)
+                        fi
+                fi
+
+                _HOT=$(echo ${_HOT}.yaml)
+                echo -e "${GREEN} [OK]${NC}"
+
+        	_LINES=$(cat ../${_ADMINCSVFILE}.tmp|wc -l)
 		heat stack-$(echo "${_COMMAND}" | awk '{print tolower($0)}') \
 		 --template-file ${_HOT} \
-		 --environment-file ../environment/common.yaml \
-		 --parameters "unit_name=${_STACKNAME}${_INSTANCESTART}" \
+		 --environment-file ../${_ENV} \
+                 --parameters "unit_name=$(cat ../${_ENV}|awk '/'${_UNITLOWER}'_unit_name/ {print $2}')$(printf "%0*d\n" $((${#_LINES}+1)) ${_INSTANCESTART})" \
 		 --parameters "admin_network_port=${_ADMIN_PORTID}" \
 		 --parameters "admin_network_mac=${_ADMIN_MAC}" \
 		 --parameters "admin_network_ip=${_ADMIN_IP}" \
 		 --parameters "sz_network_port=${_SZ_PORTID}" \
 		 --parameters "sz_network_mac=${_SZ_MAC}" \
 		 --parameters "sz_network_ip=${_SZ_IP}" \
-		 --parameters "antiaffinity_group=${_GROUP[ $((${RANDOM}%${_GROUPNUMBER})) ]}" \
+		 --parameters "antiaffinity_group=${_SERVER_GROUP_ID}" \
 		 ${_STACKNAME}${_INSTANCESTART} || exit_for_error "Error, During Stack ${_ACTION}." true hard
 		#--parameters "tenant_network_id=${_TENANT_NETWORK_ID}" \
 	fi
@@ -661,7 +775,7 @@ function create_update_vmasu {
                         #####
                         # Delete the old stack
                         #####
-                        heat stack-delete ${_STACKNAME}${_INSTANCESTART} || exit_for_error "Error, During Stack ${_ACTION}." true hard
+                        heat stack-delete ${_ASSUMEYES} ${_STACKNAME}${_INSTANCESTART} || exit_for_error "Error, During Stack ${_ACTION}." true hard
 
                         #####
                         # Wait until has been deleted
@@ -692,12 +806,13 @@ function create_update_vmasu {
                                 #####
                                 # Release the port cleaning up the security group
                                 #####
-                                echo "Cleaning up Neutron port"
-                                neutron port-update --no-security-groups ${_ADMIN_PORTID}
+                                echo -e -n "Cleaning up Neutron Port ...\t\t"
+                                port_securitygroupcleanup ${_ADMIN_PORTID} false
+                                echo -e "${GREEN} [OK]${NC}"
                                 #####
                                 # Delete Stack
                                 #####
-                                heat stack-$(echo "${_ACTION}" | awk '{print tolower($0)}') ${_STACKNAME}${_INSTANCESTART} || exit_for_error "Error, During Stack ${_ACTION}." true hard
+                                heat stack-$(echo "${_ACTION}" | awk '{print tolower($0)}') ${_ASSUMEYES} ${_STACKNAME}${_INSTANCESTART} || exit_for_error "Error, During Stack ${_ACTION}." false soft
                                 _INSTANCESTART=$(($_INSTANCESTART+1))
                         fi
                 done
@@ -717,7 +832,7 @@ function init_vmasu {
         # Verify if the stack already exist. A double create will fail
         # Verify if the stack exist in order to be updated
         #####
-        echo -e -n "Verifing if ${_STACKNAME}${_INSTANCESTART} is already loaded ...\t\t"
+        echo -e -n "Verifying if ${_STACKNAME}${_INSTANCESTART} is already loaded ...\t\t"
         heat resource-list ${_STACKNAME}${_INSTANCESTART} > /dev/null 2>&1
         _STATUS=${?}
         if [[ "${_ACTION}" == "Create" && "${_STATUS}" == "0" ]]
@@ -744,9 +859,17 @@ function init_vmasu {
                 #####
                 # Update the port securtiy group
                 #####
-                neutron port-update --no-security-groups ${_ADMIN_PORTID}
-                neutron port-update --security-group $(cat ../environment/common.yaml|awk '/admin_security_group_name/ {print $2}') ${_ADMIN_PORTID}
-                neutron port-update --no-security-groups ${_SZ_PORTID}
+                echo -e -n "Updating Neutron Ports for ${_UNIT} ...\t\t"
+                port_securitygroupcleanup ${_ADMIN_PORTID} false
+                port_securitygroup ${_ADMIN_PORTID} \
+                        $(cat ../${_ENV}|awk '/admin_security_group_enabled/ {print $2}'|awk '{print tolower($0)}') \
+                        $(cat ../${_ENV}|awk '/admin_security_group_name/ {print $2}') \
+                        true # This is a true since in production this port will be VIRTIO
+                port_securitygroup ${_SZ_PORTID} \
+                        $(cat ../${_ENV}|awk '/sz_security_group_enabled/ {print $2}'|awk '{print tolower($0)}') \
+                        $(cat ../${_ENV}|awk '/sz_security_group_name/ {print $2}') \
+                        false # This is a false since in production this port will be SR-IOV
+                echo -e "${GREEN} [OK]${NC}"
 
                 #####
                 # Load the Stack and pass the following information
@@ -755,32 +878,59 @@ function init_vmasu {
                 # - Hostname
                 # - (Anti-)Affinity Group ID from the Group Array which is a modulo math operation (%) betweem the Stack number (1..2..3 etc) and the Available anti-affinity Group. 
                 #####
-                _LOCAL_BOOT=$(cat ../environment/common.yaml|awk '/'${_UNITLOWER}'_local_boot/ {print $2}'|awk '{print tolower($0)}')
-                _SOURCE_BOOT=$(cat ../environment/common.yaml|awk '/'${_UNITLOWER}'_image_source/ {print $2}'|awk '{print tolower($0)}')
+		echo -e -n "Identifying the right HOT to be used ...\t\t"
+                _LOCAL_BOOT=$(cat ../${_ENV}|awk '/'${_UNITLOWER}'_local_boot/ {print $2}'|awk '{print tolower($0)}')
+                _SOURCE_BOOT=$(cat ../${_ENV}|awk '/'${_UNITLOWER}'_image_source/ {print $2}'|awk '{print tolower($0)}')
+                _SERVER_GROUP=$(cat ../${_ENV}|awk '/'${_UNITLOWER}'_server_group_enable/ {print $2}'|awk '{print tolower($0)}')
                 if [[ "${_LOCAL_BOOT}" == "true" && "${_SOURCE_BOOT}" == "cinder" ]]
                 then
                         exit_for_error "Error, Local Boot using a Volume source is not supported in OpenStack." true hard
-                elif [[ "${_SOURCE_BOOT}" == "cinder" ]]
+                elif [[ ${_SERVER_GROUP} != "true" && ${_SERVER_GROUP} != "false" ]]
                 then
-                        _HOT="../templates/${_UNITLOWER}_cinder_source.yaml"
-                elif "${_LOCAL_BOOT}" # in this case _SOURCE_BOOT=glance
-                then
-                        _HOT="../templates/${_UNITLOWER}.yaml"
-                else
-                        _HOT="../templates/${_UNITLOWER}_volume.yaml"
+                        exit_for_error "Error, Server Group parameters ${_UNITLOWER}_server_group_enable can be only \"true\" or \"false\"." true hard
                 fi
 
+                if [[ "${_SOURCE_BOOT}" == "cinder" ]]
+                then
+                        _HOT="../templates/${_UNITLOWER}_cinder_source"
+                elif "${_LOCAL_BOOT}" # in this case _SOURCE_BOOT=glance
+                then
+                        _HOT="../templates/${_UNITLOWER}"
+                else
+                        _HOT="../templates/${_UNITLOWER}_volume"
+                fi
+
+                if [[ "${_ACTION}" == "Create" ]] && ${_SERVER_GROUP}
+                then
+                        _SERVER_GROUP_ID=${_GROUP[ $((${RANDOM}%${_GROUPNUMBER})) ]}
+                elif [[ "${_ACTION}" == "Create" ]] && ! ${_SERVER_GROUP} # in this case _SERVER_GROUP=false
+                then
+                        _HOT=$(echo ${_HOT}_no_server_group)
+                elif [[ "${_ACTION}" == "Update" ]] # In this case an update might delete the running VM so cannot be put in a new/different server group
+                then
+                        _SERVER_GROUP_ID=$(nova server-group-list|grep $(heat resource-list ${_STACKNAME}${_INSTANCESTART}|grep "OS::Nova::Server"|awk '{print $4}')|awk '{print $2}')
+                        if [[ "${_SERVER_GROUP_ID}" == "" ]]
+                        then
+				echo -e -n "${YELLOW} Warning, the Stack ${_STACKNAME}${_INSTANCESTART} has been created without Server Groups so it will keep not using them.${NC}"
+                                _HOT=$(echo ${_HOT}_no_server_group)
+                        fi
+                fi
+
+                _HOT=$(echo ${_HOT}.yaml)
+                echo -e "${GREEN} [OK]${NC}"
+
+        	_LINES=$(cat ../${_ADMINCSVFILE}.tmp|wc -l)
                 heat stack-$(echo "${_COMMAND}" | awk '{print tolower($0)}') \
                  --template-file ${_HOT} \
-                 --environment-file ../environment/common.yaml \
-                 --parameters "unit_name=${_STACKNAME}${_INSTANCESTART}" \
+                 --environment-file ../${_ENV} \
+                 --parameters "unit_name=$(cat ../${_ENV}|awk '/'${_UNITLOWER}'_unit_name/ {print $2}')$(printf "%0*d\n" $((${#_LINES}+1)) ${_INSTANCESTART})" \
                  --parameters "admin_network_port=${_ADMIN_PORTID}" \
                  --parameters "admin_network_mac=${_ADMIN_MAC}" \
                  --parameters "admin_network_ip=${_ADMIN_IP}" \
                  --parameters "sz_network_port=${_SZ_PORTID}" \
                  --parameters "sz_network_mac=${_SZ_MAC}" \
                  --parameters "sz_network_ip=${_SZ_IP}" \
-                 --parameters "antiaffinity_group=${_GROUP[ $((${RANDOM}%${_GROUPNUMBER})) ]}" \
+                 --parameters "antiaffinity_group=${_SERVER_GROUP_ID}" \
                  ${_STACKNAME}${_INSTANCESTART} || exit_for_error "Error, During Stack ${_ACTION}." true hard
                 #--parameters "tenant_network_id=${_TENANT_NETWORK_ID}" \
         fi
@@ -813,7 +963,7 @@ function create_update_mau {
                         #####
                         # Delete the old stack
                         #####
-                        heat stack-delete ${_STACKNAME}${_INSTANCESTART} || exit_for_error "Error, During Stack ${_ACTION}." true hard
+                        heat stack-delete ${_ASSUMEYES} ${_STACKNAME}${_INSTANCESTART} || exit_for_error "Error, During Stack ${_ACTION}." true hard
 
                         #####
                         # Wait until has been deleted
@@ -843,12 +993,13 @@ function create_update_mau {
                                 #####
                                 # Release the port cleaning up the security group
                                 #####
-                                echo "Cleaning up Neutron port"
-                                neutron port-update --no-security-groups ${_ADMIN_PORTID}
+                                echo -e -n "Cleaning up Neutron Port ...\t\t"
+                                port_securitygroupcleanup ${_ADMIN_PORTID} false
+                                echo -e "${GREEN} [OK]${NC}"
                                 #####
                                 # Delete Stack
                                 #####
-                                heat stack-$(echo "${_ACTION}" | awk '{print tolower($0)}') ${_STACKNAME}${_INSTANCESTART} || exit_for_error "Error, During Stack ${_ACTION}." true hard
+                                heat stack-$(echo "${_ACTION}" | awk '{print tolower($0)}') ${_ASSUMEYES} ${_STACKNAME}${_INSTANCESTART} || exit_for_error "Error, During Stack ${_ACTION}." false soft
                                 _INSTANCESTART=$(($_INSTANCESTART+1))
                         fi
                 done
@@ -867,7 +1018,7 @@ function init_mau {
         # Verify if the stack already exist. A double create will fail
         # Verify if the stack exist in order to be updated
         #####
-        echo -e -n "Verifing if ${_STACKNAME}${_INSTANCESTART} is already loaded ...\t\t"
+        echo -e -n "Verifying if ${_STACKNAME}${_INSTANCESTART} is already loaded ...\t\t"
         heat resource-list ${_STACKNAME}${_INSTANCESTART} > /dev/null 2>&1
         _STATUS=${?}
         if [[ "${_ACTION}" == "Create" && "${_STATUS}" == "0" ]]
@@ -891,8 +1042,13 @@ function init_mau {
                 #####
                 # Update the port securtiy group
                 #####
-                neutron port-update --no-security-groups ${_ADMIN_PORTID}
-                neutron port-update --security-group $(cat ../environment/common.yaml|awk '/admin_security_group_name/ {print $2}') ${_ADMIN_PORTID}
+                echo -e -n "Updating Neutron Ports for ${_UNIT} ...\t\t"
+                port_securitygroupcleanup ${_ADMIN_PORTID} false
+                port_securitygroup ${_ADMIN_PORTID} \
+                        $(cat ../${_ENV}|awk '/admin_security_group_enabled/ {print $2}'|awk '{print tolower($0)}') \
+                        $(cat ../${_ENV}|awk '/admin_security_group_name/ {print $2}') \
+                        true # This is a true since in production this port will be VIRTIO
+                echo -e "${GREEN} [OK]${NC}"
 
                 #####
                 # Load the Stack and pass the following information
@@ -900,29 +1056,56 @@ function init_mau {
                 # - Hostname
                 # - (Anti-)Affinity Group ID from the Group Array which is a modulo math operation (%) betweem the Stack number (1..2..3 etc) and the Available anti-affinity Group. 
                 #####
-                _LOCAL_BOOT=$(cat ../environment/common.yaml|awk '/'${_UNITLOWER}'_local_boot/ {print $2}'|awk '{print tolower($0)}')
-                _SOURCE_BOOT=$(cat ../environment/common.yaml|awk '/'${_UNITLOWER}'_image_source/ {print $2}'|awk '{print tolower($0)}')
+		echo -e -n "Identifying the right HOT to be used ...\t\t"
+                _LOCAL_BOOT=$(cat ../${_ENV}|awk '/'${_UNITLOWER}'_local_boot/ {print $2}'|awk '{print tolower($0)}')
+                _SOURCE_BOOT=$(cat ../${_ENV}|awk '/'${_UNITLOWER}'_image_source/ {print $2}'|awk '{print tolower($0)}')
+                _SERVER_GROUP=$(cat ../${_ENV}|awk '/'${_UNITLOWER}'_server_group_enable/ {print $2}'|awk '{print tolower($0)}')
                 if [[ "${_LOCAL_BOOT}" == "true" && "${_SOURCE_BOOT}" == "cinder" ]]
                 then
                         exit_for_error "Error, Local Boot using a Volume source is not supported in OpenStack." true hard
-                elif [[ "${_SOURCE_BOOT}" == "cinder" ]]
+                elif [[ ${_SERVER_GROUP} != "true" && ${_SERVER_GROUP} != "false" ]]
                 then
-                        _HOT="../templates/${_UNITLOWER}_cinder_source.yaml"
-                elif "${_LOCAL_BOOT}" # in this case _SOURCE_BOOT=glance
-                then
-                        _HOT="../templates/${_UNITLOWER}.yaml"
-                else
-                        _HOT="../templates/${_UNITLOWER}_volume.yaml"
+                        exit_for_error "Error, Server Group parameters ${_UNITLOWER}_server_group_enable can be only \"true\" or \"false\"." true hard
                 fi
 
+                if [[ "${_SOURCE_BOOT}" == "cinder" ]]
+                then
+                        _HOT="../templates/${_UNITLOWER}_cinder_source"
+                elif "${_LOCAL_BOOT}" # in this case _SOURCE_BOOT=glance
+                then
+                        _HOT="../templates/${_UNITLOWER}"
+                else
+                        _HOT="../templates/${_UNITLOWER}_volume"
+                fi
+
+                if [[ "${_ACTION}" == "Create" ]] && ${_SERVER_GROUP}
+                then
+                        _SERVER_GROUP_ID=${_GROUP[ $((${RANDOM}%${_GROUPNUMBER})) ]}
+                elif [[ "${_ACTION}" == "Create" ]] && ! ${_SERVER_GROUP} # in this case _SERVER_GROUP=false
+                then
+                        _HOT=$(echo ${_HOT}_no_server_group)
+                elif [[ "${_ACTION}" == "Update" ]] # In this case an update might delete the running VM so cannot be put in a new/different server group
+                then
+                        _SERVER_GROUP_ID=$(nova server-group-list|grep $(heat resource-list ${_STACKNAME}${_INSTANCESTART}|grep "OS::Nova::Server"|awk '{print $4}')|awk '{print $2}')
+                        if [[ "${_SERVER_GROUP_ID}" == "" ]]
+                        then
+				echo -e -n "${YELLOW} Warning, the Stack ${_STACKNAME}${_INSTANCESTART} has been created without Server Groups so it will keep not using them.${NC}"
+                                _HOT=$(echo ${_HOT}_no_server_group)
+                        fi
+                fi
+
+                _HOT=$(echo ${_HOT}.yaml)
+                echo -e "${GREEN} [OK]${NC}"
+
+        	_LINES=$(cat ../${_ADMINCSVFILE}.tmp|wc -l)
                 heat stack-$(echo "${_COMMAND}" | awk '{print tolower($0)}') \
                  --template-file ${_HOT} \
-                 --environment-file ../environment/common.yaml \
-                 --parameters "unit_name=${_STACKNAME}${_INSTANCESTART}" \
+                 --environment-file ../${_ENV} \
+                 --parameters "unit_name=$(cat ../${_ENV}|awk '/'${_UNITLOWER}'_unit_name/ {print $2}')$(printf "%0*d\n" $((${#_LINES}+1)) ${_INSTANCESTART})" \
                  --parameters "admin_network_port=${_ADMIN_PORTID}" \
                  --parameters "admin_network_mac=${_ADMIN_MAC}" \
                  --parameters "admin_network_ip=${_ADMIN_IP}" \
-                 --parameters "antiaffinity_group=${_GROUP[ $((${RANDOM}%${_GROUPNUMBER})) ]}" \
+                 --parameters "antiaffinity_group=${_SERVER_GROUP_ID}" \
                  ${_STACKNAME}${_INSTANCESTART} || exit_for_error "Error, During Stack ${_ACTION}." true hard
                 #--parameters "tenant_network_id=${_TENANT_NETWORK_ID}" \
         fi
@@ -936,11 +1119,11 @@ function init_mau {
 #####
 function validation {
 	_UNITTOBEVALIDATED=$1
-	_IMAGE=$(cat ../environment/common.yaml|grep "$(echo "${_UNITTOBEVALIDATED}" | awk '{print tolower($0)}')_image"|grep -v -E "image_id|image_source|image_volume_size"|awk '{print $2}'|sed "s/\"//g")
-	_IMAGEID=$(cat ../environment/common.yaml|awk '/'$(echo "${_UNITTOBEVALIDATED}" | awk '{print tolower($0)}')_image_id'/ {print $2}'|sed "s/\"//g")
-	_VOLUMEID=$(cat ../environment/common.yaml|awk '/'$(echo "${_UNITTOBEVALIDATED}" | awk '{print tolower($0)}')_volume_id'/ {print $2}'|sed "s/\"//g")
-	_FLAVOR=$(cat ../environment/common.yaml|awk '/'$(echo "${_UNITTOBEVALIDATED}" | awk '{print tolower($0)}')_flavor_name'/ {print $2}'|sed "s/\"//g")
-	_SOURCE=$(cat ../environment/common.yaml|grep "$(echo "${_UNITTOBEVALIDATED}" | awk '{print tolower($0)}')_image_source"|awk '{print $2}'|sed "s/\"//g")
+	_IMAGE=$(cat ../${_ENV}|grep "$(echo "${_UNITTOBEVALIDATED}" | awk '{print tolower($0)}')_image"|grep -v -E "image_id|image_source|image_volume_size"|awk '{print $2}'|sed "s/\"//g")
+	_IMAGEID=$(cat ../${_ENV}|awk '/'$(echo "${_UNITTOBEVALIDATED}" | awk '{print tolower($0)}')_image_id'/ {print $2}'|sed "s/\"//g")
+	_VOLUMEID=$(cat ../${_ENV}|awk '/'$(echo "${_UNITTOBEVALIDATED}" | awk '{print tolower($0)}')_volume_id'/ {print $2}'|sed "s/\"//g")
+	_FLAVOR=$(cat ../${_ENV}|awk '/'$(echo "${_UNITTOBEVALIDATED}" | awk '{print tolower($0)}')_flavor_name'/ {print $2}'|sed "s/\"//g")
+	_SOURCE=$(cat ../${_ENV}|grep "$(echo "${_UNITTOBEVALIDATED}" | awk '{print tolower($0)}')_image_source"|awk '{print $2}'|sed "s/\"//g")
 
 	#####
 	# _SOURCE=glance -> Check the Image Id and the Image Name is the same 
@@ -948,7 +1131,7 @@ function validation {
 	#####
 	if [[ "${_SOURCE}" == "glance" ]]
 	then
-		if $(cat ../environment/common.yaml|awk '/'${_UNITLOWER}'_local_boot/ {print $2}'|awk '{print tolower($0)}')
+		if $(cat ../${_ENV}|awk '/'${_UNITLOWER}'_local_boot/ {print $2}'|awk '{print tolower($0)}')
 		then
 			echo -e "${GREEN}The Unit ${_UNITTOBEVALIDATED} will boot from the local hypervisor disk (aka Ephemeral Disk)${NC}"
 		else
@@ -966,7 +1149,7 @@ function validation {
 
 		echo -e -n "Validating given volume size ...\t\t"
 		_VOLUME_SIZE=$(cinder show ${_VOLUMEID}|awk '/size/ {print $4}'|sed "s/ //g")
-		_VOLUME_GIVEN_SIZE=$(cat ../environment/common.yaml|awk '/'$(echo "${_UNITTOBEVALIDATED}" | awk '{print tolower($0)}')_volume_size'/ {print $2}'|sed "s/\"//g")
+		_VOLUME_GIVEN_SIZE=$(cat ../${_ENV}|awk '/'$(echo "${_UNITTOBEVALIDATED}" | awk '{print tolower($0)}')_volume_size'/ {print $2}'|sed "s/\"//g")
 		if (( "${_VOLUME_GIVEN_SIZE}" < "${_VOLUME_SIZE}" ))
 		then
 			exit_for_error "Error, Volume for Unit ${_UNITTOBEVALIDATED} with UUID ${_VOLUMEID} has a size of ${_VOLUME_SIZE} which cannot fit into the given input size of ${_VOLUME_GIVEN_SIZE}." true hard
@@ -1021,8 +1204,8 @@ function validation {
 function net_validation {
         _UNITTOBEVALIDATED=$1
 	_NET=$2
-        _NETWORK=$(cat ../environment/common.yaml|awk '/'${_NET}'_network_name/ {print $2}'|sed "s/\"//g")
-        _VLAN=$(cat ../environment/common.yaml|awk '/'${_NET}'_network_vlan/ {print $2}'|sed "s/\"//g")
+        _NETWORK=$(cat ../${_ENV}|awk '/'${_NET}'_network_name/ {print $2}'|sed "s/\"//g")
+        _VLAN=$(cat ../${_ENV}|awk '/'${_NET}'_network_vlan/ {print $2}'|sed "s/\"//g")
 
 	#####
 	# Check the Network exist
@@ -1089,7 +1272,7 @@ function port_validation {
 function ip_validation {
         _IP=$1
 
-#####
+        #####
         # Check if the given IP or NetMask is valid
         #####
         echo -e -n "Validating IP Address ${_IP} ...\t\t"
@@ -1150,7 +1333,31 @@ function mergeFiles {
 	perl -e 'open(f1,"<$ARGV[0]");@b=<f1>; close(f1);open(f2,"<$ARGV[1]");@c=<f2>;close(f2);chomp(@c);$d=join("\n",@c);for $i (@b) {$i =~ s/$ARGV[2]/$d/ ; print $i}' $MainFile  $SecondFile $Pattern  \
 	| perl -p -e '/<<\s+EOF/ ... /EOF/ and s/([^\\])\$/$1\\\$/g' > $DestFile
 }
-
+function port_securitygroup {
+        _PORT=$1
+	_SECGROUPENABLE=$2
+	_SECGROUPNAME=$3
+	_EXITHARD=$4
+	if ${_SECGROUPENABLE}
+	then
+		if ${_EXITHARD}
+		then
+			neutron port-update --security-group ${_SECGROUPNAME} ${_PORT} > /dev/null 2>&1 || exit_for_error "Error, During Neutron Port ${_ADMIN_PORTID} Security Group Update." true hard
+		else
+			neutron port-update --security-group ${_SECGROUPNAME} ${_PORT} > /dev/null 2>&1 || exit_for_error "Error, During Neutron Port ${_ADMIN_PORTID} Security Group Update." false soft
+		fi
+	fi
+}
+function port_securitygroupcleanup {
+        _PORT=$1
+	_EXITHARD=$2
+	if ${_EXITHARD}
+	then
+		neutron port-update --no-security-groups ${_PORT} >/dev/null 2>&1 || exit_for_error "Error, During Neutron Port ${_ADMIN_PORTID} Security Group Clean Up." true hard
+	else
+		neutron port-update --no-security-groups ${_PORT} >/dev/null 2>&1 || exit_for_error "Error, During Neutron Port ${_ADMIN_PORTID} Security Group Clean Up." false soft
+	fi
+}
 #####
 # Write the input args into variable
 #####
@@ -1162,6 +1369,8 @@ _INSTANCESTART=${4-1}
 [[ "${5}" != "" ]] && _INSTANCEEND=${5} || _INSTANCEEND=false
 _CSVFILEPATH=${6-environment/${_UNITLOWER}}
 _STACKNAME=${7-${_UNITLOWER}}
+_ENV="environment/common.yaml"
+_CHECKS="environment/common_checks"
 
 #####
 # Verity if any input values are present
@@ -1256,7 +1465,7 @@ _MEDIACSVFILE=$(echo ${_CSVFILEPATH}/media.csv)
 # - Does it have the given starting line?
 # - Does it have the given ending line?
 #####
-echo -e -n "Verifing if Admin CSV file is good ...\t\t"
+echo -e -n "Verifying if Admin CSV file is good ...\t\t"
 if [ ! -f ${_ADMINCSVFILE} ] || [ ! -r ${_ADMINCSVFILE} ] || [ ! -s ${_ADMINCSVFILE} ]
 then
 	echo -e "${RED}"
@@ -1267,7 +1476,7 @@ then
 fi
 echo -e "${GREEN} [OK]${NC}"
 
-echo -e -n "Verifing if Admin CSV file has the given starting line ${_INSTANCESTART} ...\t\t"
+echo -e -n "Verifying if Admin CSV file has the given starting line ${_INSTANCESTART} ...\t\t"
 if [[ "$(sed -n -e "${_INSTANCESTART}p" ${_ADMINCSVFILE} | sed -e "s/\^M//g" | grep -v "^$")" == "" ]]
 then
 	echo -e "${RED}"
@@ -1280,7 +1489,7 @@ echo -e "${GREEN} [OK]${NC}"
 
 if [[ "${_INSTANCEEND}" != "false" ]]
 then
-	echo -e -n "Verifing if Admin CSV file has the given ending line ${_INSTANCEEND} ...\t\t"
+	echo -e -n "Verifying if Admin CSV file has the given ending line ${_INSTANCEEND} ...\t\t"
 	if [[ "$(sed -n -e "${_INSTANCEEND}p" ${_ADMINCSVFILE} | sed -e "s/\^M//g" | grep -v "^$")" == "" ]]
 	then
 		echo -e "${RED}"
@@ -1302,7 +1511,7 @@ fi
 #####
 if [[ ! "${_UNIT}" == "MAU" ]]
 then
-	echo -e -n "Verifing if Secure Zone CSV file is good ...\t\t"
+	echo -e -n "Verifying if Secure Zone CSV file is good ...\t\t"
 	if [ ! -f ${_SZCSVFILE} ] || [ ! -r ${_SZCSVFILE} ] || [ ! -s ${_SZCSVFILE} ]
 	then
 		echo -e "${RED}"
@@ -1313,7 +1522,7 @@ then
 	fi
 	echo -e "${GREEN} [OK]${NC}"
 	
-	echo -e -n "Verifing if Secure Zone CSV file has the given starting line ${_INSTANCESTART} ...\t\t"
+	echo -e -n "Verifying if Secure Zone CSV file has the given starting line ${_INSTANCESTART} ...\t\t"
 	if [[ "$(sed -n -e "${_INSTANCESTART}p" ${_SZCSVFILE} | sed -e "s/\^M//g" | grep -v "^$")" == "" ]]
 	then
 	        echo -e "${RED}"
@@ -1326,7 +1535,7 @@ then
 	
 	if [[ "${_INSTANCEEND}" != "false" ]]
 	then
-	        echo -e -n "Verifing if Secure Zone CSV file has the given ending line ${_INSTANCEEND} ...\t\t"
+	        echo -e -n "Verifying if Secure Zone CSV file has the given ending line ${_INSTANCEEND} ...\t\t"
 	        if [[ "$(sed -n -e "${_INSTANCEEND}p" ${_SZCSVFILE} | sed -e "s/\^M//g" | grep -v "^$")" == "" ]]
 	        then
 	                echo -e "${RED}"
@@ -1349,7 +1558,7 @@ fi
 #####
 if [[ "${_UNIT}" == "CMS" ]]
 then
-	echo -e -n "Verifing if SIP CSV file is good ...\t\t"
+	echo -e -n "Verifying if SIP CSV file is good ...\t\t"
 	if [ ! -f ${_SIPCSVFILE} ] || [ ! -r ${_SIPCSVFILE} ] || [ ! -s ${_SIPCSVFILE} ]
 	then
 		echo -e "${RED}"
@@ -1360,7 +1569,7 @@ then
 	fi
 	echo -e "${GREEN} [OK]${NC}"
 	
-	echo -e -n "Verifing if SIP CSV file has the given starting line ${_INSTANCESTART} ...\t\t"
+	echo -e -n "Verifying if SIP CSV file has the given starting line ${_INSTANCESTART} ...\t\t"
 	if [[ "$(sed -n -e "${_INSTANCESTART}p" ${_SIPCSVFILE} | sed -e "s/\^M//g" | grep -v "^$")" == "" ]]
 	then
 	        echo -e "${RED}"
@@ -1373,7 +1582,7 @@ then
 	
 	if [[ "${_INSTANCEEND}" != "false" ]]
 	then
-	        echo -e -n "Verifing if SIP CSV file has the given ending line ${_INSTANCEEND} ...\t\t"
+	        echo -e -n "Verifying if SIP CSV file has the given ending line ${_INSTANCEEND} ...\t\t"
 	        if [[ "$(sed -n -e "${_INSTANCEEND}p" ${_SIPCSVFILE} | sed -e "s/\^M//g" | grep -v "^$")" == "" ]]
 	        then
 	                echo -e "${RED}"
@@ -1396,7 +1605,7 @@ fi
 #####
 if [[ "${_UNIT}" == "CMS" ]]
 then
-	echo -e -n "Verifing if Media CSV file is good ...\t\t"
+	echo -e -n "Verifying if Media CSV file is good ...\t\t"
 	if [ ! -f ${_MEDIACSVFILE} ] || [ ! -r ${_MEDIACSVFILE} ] || [ ! -s ${_MEDIACSVFILE} ]
 	then
 		echo -e "${RED}"
@@ -1407,7 +1616,7 @@ then
 	fi
 	echo -e "${GREEN} [OK]${NC}"
 	
-	echo -e -n "Verifing if Media CSV file has the given starting line ${_INSTANCESTART} ...\t\t"
+	echo -e -n "Verifying if Media CSV file has the given starting line ${_INSTANCESTART} ...\t\t"
 	if [[ "$(sed -n -e "${_INSTANCESTART}p" ${_MEDIACSVFILE} | sed -e "s/\^M//g" | grep -v "^$")" == "" ]]
 	then
 	        echo -e "${RED}"
@@ -1420,7 +1629,7 @@ then
 	
 	if [[ "${_INSTANCEEND}" != "false" ]]
 	then
-	        echo -e -n "Verifing if Media CSV file has the given ending line ${_INSTANCEEND} ...\t\t"
+	        echo -e -n "Verifying if Media CSV file has the given ending line ${_INSTANCEEND} ...\t\t"
 	        if [[ "$(sed -n -e "${_INSTANCEEND}p" ${_MEDIACSVFILE} | sed -e "s/\^M//g" | grep -v "^$")" == "" ]]
 	        then
 	                echo -e "${RED}"
@@ -1439,19 +1648,31 @@ fi
 _BINS="heat nova neutron glance cinder"
 for _BIN in ${_BINS}
 do
-	echo -e -n "Verifing ${_BIN} binary ...\t\t"
+	echo -e -n "Verifying ${_BIN} binary ...\t\t"
 	which ${_BIN} > /dev/null 2>&1 || exit_for_error "Error, Cannot find python${_BIN}-client." false
 	echo -e "${GREEN} [OK]${NC}"
 done
-echo -e -n "Verifing git binary ...\t\t"
+
+echo -e -n "Verifying Heat Assume Yes ...\t\t"
+_ASSUMEYES=""
+heat help stack-delete|grep "\-\-yes" >/dev/null 2>&1
+if [[ "${?}" == "0" ]]
+then
+        _ASSUMEYES="--yes"
+        echo -e "${GREEN} [OK]${NC}"
+else
+        echo -e "${YELLOW} [NOT AVAILABLE]${NC}"
+fi
+
+echo -e -n "Verifying git binary ...\t\t"
 which git > /dev/null 2>&1 || exit_for_error "Error, Cannot find git and any changes will be commited." false soft
 echo -e "${GREEN} [OK]${NC}"
 
-echo -e -n "Verifing dos2unix binary ...\t\t"
-which git > /dev/null 2>&1 || exit_for_error "Error, Cannot find dos2unix binary, please install it first." false hard
+echo -e -n "Verifying dos2unix binary ...\t\t"
+which git > /dev/null 2>&1 || exit_for_error "Error, Cannot find dos2unix binary, please install it first\nThe installation will continue BUT the Wrapper cannot ensure the File Unix format consistency." false soft
 echo -e "${GREEN} [OK]${NC}"
 
-echo -e -n "Verifing md5sum binary ...\t\t"
+echo -e -n "Verifying md5sum binary ...\t\t"
 which git > /dev/null 2>&1 || exit_for_error "Error, Cannot find md5sum binary." false hard
 echo -e "${GREEN} [OK]${NC}"
 
@@ -1476,11 +1697,178 @@ done
 echo -e "${GREEN} [OK]${NC}"
 
 #####
+# Verify if there is the environment file
+#####
+echo -e -n "Verifying if there is the environment file ...\t\t"
+if [ ! -f ${_ENV} ] || [ ! -r ${_ENV} ] || [ ! -s ${_ENV} ]
+then
+        exit_for_error "Error, Environment file missing." false hard
+fi
+echo -e "${GREEN} [OK]${NC}"
+
+#####
+# Verify if there is any duplicated entry in the environment file
+#####
+echo -e -n "Verifying duplicate entries in the environment file ...\t\t"
+_DUPENTRY=$(cat ${_ENV}|grep -v -E '^[[:space:]]*$|#|^$'|awk '{print $1}'|sort|uniq -c|grep " 2 "|wc -l)
+if (( "${_DUPENTRY}" > "0" ))
+then
+        echo -e "${RED}Found Duplicate Entries${NC}"
+        _OLDIFS=$IFS
+        IFS=$'\n'
+        for _VALUE in $(cat ${_ENV}|grep -v -E '^[[:space:]]*$|#|^$'|awk '{print $1}'|sort|uniq -c|grep " 2 "|awk '{print $2}'|sed 's/://g')
+        do
+                echo -e "${YELLOW}This parameters is present more than once:${NC} ${RED}${_VALUE}${NC}"
+        done
+        IFS=${_OLDIFS}
+        exit_for_error "Error, Please fix the above duplicate entries and then you can continue." false hard
+fi
+echo -e "${GREEN} [OK]${NC}"
+
+#####
+# Verify if there is a test for each entry in the environment file
+#####
+echo -e -n "Verifying if there is a test for each entry in the environment file ...\t\t"
+_EXIT=false
+_OLDIFS=$IFS
+IFS=$'\n'
+for _ENVVALUE in $(cat ${_ENV}|grep -v -E '^[[:space:]]*$|#|^$'|grep -v -E "parameter_defaults|[-]{3}"|awk '{print $1}')
+do
+        grep ${_ENVVALUE} ${_CHECKS} >/dev/null 2>&1
+        if [[ "${?}" != "0" ]]
+        then
+                _EXIT=true
+                echo -e -n "\n${YELLOW}Error, missing test for parameter ${NC}${RED}${_ENVVALUE}${NC}${YELLOW} in environment check file ${_CHECKS}${NC}"
+        fi
+done
+if ${_EXIT}
+then
+        echo -e -n "\n"
+        exit 1
+fi
+IFS=${_OLDIFS}
+echo -e "${GREEN} [OK]${NC}"
+
+
+#####
+# Verify if the environment file has the right input values
+#####
+echo -e -n "Verifying if the environment file has all of the right input values ...\t\t"
+_EXIT=false
+if [ ! -f ${_CHECKS} ] || [ ! -r ${_CHECKS} ] || [ ! -s ${_CHECKS} ]
+then
+	exit_for_error "Error, Missing Environment check file." false hard
+else
+	_OLDIFS=$IFS
+	IFS=$'\n'
+	for _INPUTTOBECHECKED in $(cat ${_CHECKS})
+	do
+		_PARAM=$(echo ${_INPUTTOBECHECKED}|awk '{print $1}')
+		_EXPECTEDVALUE=$(echo ${_INPUTTOBECHECKED}|awk '{print $2}')
+		_PARAMFOUND=$(grep ${_PARAM} ${_ENV}|awk '{print $1}')
+		_VALUEFOUND=$(grep ${_PARAM} ${_ENV}|awk '{print $2}'|sed "s/\"//g")
+		#####
+		# Verify that I have all of my parameters
+		#####
+		if [[ "${_PARAMFOUND}" == "" ]]
+		then
+			_EXIT=true
+			echo -e -n "\n${YELLOW}Error, missing parameter ${NC}${RED}${_PARAM}${NC}${YELLOW} in environment file.${NC}"
+		fi
+		#####
+		# Verify that I have for each parameter a value
+		#####
+		if [[ "${_VALUEFOUND}" == "" && "${_PARAMFOUND}" != "" ]]
+		then
+			_EXIT=true
+			echo -e -n "\n${YELLOW}Error, missing value for parameter ${NC}${RED}${_PARAMFOUND}${NC}${YELLOW} in environment file.${NC}"
+		fi
+		#####
+		# Verify that I have the right/expected value
+		#####
+		if [[ "${_EXPECTEDVALUE}" == "string" ]]
+		then
+			echo "${_VALUEFOUND}"|grep -E "[a-zA-Z_-\.]" >/dev/null 2>&1
+			if [[ "${?}" != "0" ]]
+			then
+				_EXIT=true
+				echo -e -n "\n${YELLOW}Error, value ${NC}${RED}${_VALUEFOUND}${NC}${YELLOW} for parameter ${NC}${RED}${_PARAMFOUND}${NC}${YELLOW} in environment file is not correct.${NC}"
+				echo -e -n "\n${RED}It has to be a String with the following characters a-zA-Z_-.${NC}"
+			fi
+		elif [[ "${_EXPECTEDVALUE}" == "boolean" ]]
+	        then
+	                echo "${_VALUEFOUND}"|grep -E "^(true|false|True|False|TRUE|FALSE)$" >/dev/null 2>&1
+	                if [[ "${?}" != "0" ]]
+	                then
+	                        _EXIT=true
+	                        echo -e -n "\n${YELLOW}Error, value ${NC}${RED}${_VALUEFOUND}${NC}${YELLOW} for parameter ${NC}${RED}${_PARAMFOUND}${NC}${YELLOW} in environment file is not correct.${NC}"
+	                        echo -e -n "\n${RED}It has to be a Boolean, e.g. True${NC}"
+	                fi
+	        elif [[ "${_EXPECTEDVALUE}" == "number" ]]
+	        then
+	                echo "${_VALUEFOUND}"|grep -E "[0-9]" >/dev/null 2>&1
+	                if [[ "${?}" != "0" ]]
+	                then
+	                        _EXIT=true
+	                        echo -e -n "\n${YELLOW}Error, value ${NC}${RED}${_VALUEFOUND}${NC}${YELLOW} for parameter ${NC}${RED}${_PARAMFOUND}${NC}${YELLOW} in environment file is not correct.${NC}"
+	                        echo -e -n "\n${RED}It has to be a Number, e.g. 123${NC}"
+	                fi
+	        elif [[ "${_EXPECTEDVALUE}" == "ip" ]]
+	        then
+	                echo "${_VALUEFOUND}"|grep -E "[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}" >/dev/null 2>&1
+	                if [[ "${?}" != "0" ]]
+	                then
+	                        _EXIT=true
+	                        echo -e -n "\n${YELLOW}Error, value ${NC}${RED}${_VALUEFOUND}${NC}${YELLOW} for parameter ${NC}${RED}${_PARAMFOUND}${NC}${YELLOW} in environment file is not correct.${NC}"
+	                        echo -e -n "\n${RED}It has to be an IP Address, e.g. 192.168.1.1 or a NetMask e.g. 255.255.255.0 or a Network Cidr, e.g. 192.168.1.0/24${NC}"
+	                fi
+	        elif [[ "${_EXPECTEDVALUE}" == "vlan" ]]
+	        then
+	                echo "${_VALUEFOUND}"|grep -E "^(none|[0-9]{1,4})$" >/dev/null 2>&1
+	                if [[ "${?}" != "0" ]]
+	                then
+	                        _EXIT=true
+	                        echo -e -n "\n${YELLOW}Error, value ${NC}${RED}${_VALUEFOUND}${NC}${YELLOW} for parameter ${NC}${RED}${_PARAMFOUND}${NC}${YELLOW} in environment file is not correct.${NC}"
+	                        echo -e -n "\n${RED}It has to be a VLAN ID, between 1 to 4096 or none in case of diabled VLAN configuration${NC}"
+	                fi
+	        elif [[ "${_EXPECTEDVALUE}" == "anti-affinity|affinity" ]]
+	        then
+	                echo "${_VALUEFOUND}"|grep -E "^(anti-affinity|affinity)$" >/dev/null 2>&1
+	                if [[ "${?}" != "0" ]]
+	                then
+	                        _EXIT=true
+	                        echo -e -n "\n${YELLOW}Error, value ${NC}${RED}${_VALUEFOUND}${NC}${YELLOW} for parameter ${NC}${RED}${_PARAMFOUND}${NC}${YELLOW} in environment file is not correct.${NC}"
+	                        echo -e -n "\n${RED}It has to be \"anti-affinity\" or \"affinity\"${NC}"
+	                fi
+		elif [[ "${_EXPECTEDVALUE}" == "glance|cinder" ]]
+	        then
+	                echo "${_VALUEFOUND}"|grep -E "^(glance|cinder)$" >/dev/null 2>&1
+	                if [[ "${?}" != "0" ]]
+	                then
+	                        _EXIT=true
+	                        echo -e -n "\n${YELLOW}Error, value ${NC}${RED}${_VALUEFOUND}${NC}${YELLOW} for parameter ${NC}${RED}${_PARAMFOUND}${NC}${YELLOW} in environment file is not correct.${NC}"
+	                        echo -e -n "\n${RED}It has to be \"glance\" or \"cinder\"${NC}"
+	                fi
+		else
+			_EXIT=true
+			echo -e -n "\n${YELLOW}Error, Expected value to check ${NC}${RED}${_EXPECTEDVALUE}${NC}${YELLOW} is not correct.${NC}"
+		fi
+	done
+fi
+if ${_EXIT}
+then
+	echo -e -n "\n"
+	exit 1
+fi
+IFS=${_OLDIFS}
+echo -e "${GREEN} [OK]${NC}"
+
+#####
 # Unload any previous loaded environment file
 #####
-for _ENV in $(env|grep ^OS|awk -F "=" '{print $1}')
+for _BASHENV in $(env|grep ^OS|awk -F "=" '{print $1}')
 do
-        unset ${_ENV}
+        unset ${_BASHENV}
 done
 
 #####
@@ -1493,7 +1881,7 @@ echo -e "${GREEN} [OK]${NC}"
 #####
 # Verify if the given credential are valid. This will also check if the use can contact Heat
 #####
-echo -e -n "Verifing OpenStack credential ...\t\t"
+echo -e -n "Verifying OpenStack credential ...\t\t"
 heat stack-list > /dev/null 2>&1 || exit_for_error "Error, During credential validation." false
 echo -e "${GREEN} [OK]${NC}"
 
@@ -1505,47 +1893,44 @@ heat resource-list PreparetionStack > /dev/null 2>&1 || exit_for_error "Error, C
 echo -e "${GREEN} [OK]${NC}"
 
 #####
+# Verify if the Generic Security Group is available
+#####
+echo -e -n "Verifying Generic Security Group ...\t\t"
+neutron security-group-show $(cat ${_ENV}|awk '/generic_security_group_name/ {print $2}') >/dev/null 2>&1 \
+	&& ( echo -e "${GREEN} [OK]${NC}" ) \
+	|| ( exit_for_error "Error, Cannot find the Generic Security Group." false soft )
+
+#####
 # Verify if the Admin Security Group is available
 #####
-echo -e -n "Verifing Admin Security Group ...\t\t"
-neutron security-group-show $(cat environment/common.yaml|awk '/admin_security_group_name/ {print $2}') >/dev/null 2>&1 || exit_for_error "Error, Cannot find the Admin Security Group." false hard
+echo -e -n "Verifying Admin Security Group ...\t\t"
+neutron security-group-show $(cat ${_ENV}|awk '/admin_security_group_name/ {print $2}') >/dev/null 2>&1 || exit_for_error "Error, Cannot find the Admin Security Group." false hard
 echo -e "${GREEN} [OK]${NC}"
 
 #####
 # Verify if the Server Groups are available and
 # - Load them into an array
 #####
-echo -e -n "Verifing (Anti-)Affinity rules ...\t\t"
+echo -e -n "Eventually Verifying (Anti-)Affinity rules ...\t\t"
 _GROUPS=./groups.tmp
 nova server-group-list|grep ServerGroup|sort -k4|awk '{print $4,$2}' > ${_GROUPS}
-### oops - some issues to verify:
-# 1. Resource group should be created at the preperation stack ....
-# 2. in test lab we do not run the preperation stack so i want to insert all the servers group 
-#    in the Array.
-_DEVMODE=`perl -n -e '/dev_mode.+?(\S+)$/ and print "$1"' environment/common.yaml`
-if [ "$_DEVMODE" == "True" ]
+_GROUPNUMBER=$(cat ${_GROUPS}|grep ${_UNIT}|wc -l)
+if [[ "${_GROUPNUMBER}" == "0" && "${_ACTION}" != "Delete" && "${_ACTION}" != "List" ]] && $(cat ${_ENV}|awk '/'${_UNITLOWER}'_server_group_enable/ {print $2}'|awk '{print tolower($0)}')
 then
-	_GROUP[0]=`tail -1 ${_GROUPS}| awk '{print $2}'`
-	_GROUPNUMBER=1
-else
-	_GROUPNUMBER=$(cat ${_GROUPS}|grep ${_UNIT}|wc -l)
-	if [[ "${_GROUPNUMBER}" == "0" && "${_ACTION}" != "Delete" && "${_ACTION}" != "List" ]]
-	then
-		exit_for_error "Error, There is any available (Anti-)Affinity Group." false hard
-	fi
-	_INDEXGROUP=0
-	_OLDIFS=$IFS
-	while IFS=$'\n' read -r _LINE || [[ -n "$line" ]]
-	do
-		_UNITGROUP=$(echo ${_LINE}|awk '{print $1}')
-		_UNITGROUPID=$(echo ${_LINE}|awk '{print $2}')
-		if [[ ${_UNITGROUP} =~ "${_UNIT}" ]]
-		then
-			_GROUP[${_INDEXGROUP}]=${_UNITGROUPID}
-			_INDEXGROUP=$((${_INDEXGROUP}+1))
-		fi
-	done < ${_GROUPS}
+	exit_for_error "Error, There is any available (Anti-)Affinity Group." false hard
 fi
+_INDEXGROUP=0
+_OLDIFS=$IFS
+while IFS=$'\n' read -r _LINE || [[ -n "$line" ]]
+do
+	_UNITGROUP=$(echo ${_LINE}|awk '{print $1}')
+	_UNITGROUPID=$(echo ${_LINE}|awk '{print $2}')
+	if [[ ${_UNITGROUP} =~ "${_UNIT}" ]]
+	then
+		_GROUP[${_INDEXGROUP}]=${_UNITGROUPID}
+		_INDEXGROUP=$((${_INDEXGROUP}+1))
+	fi
+done < ${_GROUPS}
 rm -rf ${_GROUPS}
 IFS=${_OLDIFS}
 echo -e "${GREEN} [OK]${NC}"
@@ -1556,7 +1941,7 @@ echo -e "${GREEN} [OK]${NC}"
 _CURRENTDIR=$(pwd)
 cd ${_CURRENTDIR}/$(dirname $0)
 
-#_TENANT_NETWORK_NAME=$(cat ../environment/common.yaml|awk '/tenant_network_name/ {print $2}')
+#_TENANT_NETWORK_NAME=$(cat ../${_ENV}|awk '/tenant_network_name/ {print $2}')
 #_TENANT_NETWORK_ID=$(neutron net-show --field id --format value ${_TENANT_NETWORK_NAME})
 
 #####

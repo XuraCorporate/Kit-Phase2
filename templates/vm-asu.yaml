@@ -171,6 +171,10 @@ resources:
             var_BalancerList: 
               list_join: [',' ,{ get_param: BalancerList } ]
             var_SystemID: { get_param: SystemID }
+            var_MailDomain: { get_param: MailDomain }
+            var_SystemName: { get_param: SystemName}
+            var_HLRS-CCSA: { get_param: HLRS-CCSA }
+            var_HLRS-CCSB: { get_param: HLRS-CCSB }
             ##############################################
             # the following Parameters are identical to some 
             # parameters above - so maybe we can remove them

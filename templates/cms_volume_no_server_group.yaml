@@ -195,7 +195,6 @@ resources:
             var_FQDN: { get_param: domain_name }
             var_localIP1: { get_param: admin_network_ip }
             var_DefaultGW: { get_param: admin_network_gateway }
-      scheduler_hints: { group: {get_param: antiaffinity_group } }
       block_device_mapping_v2:
         -
           boot_index: 0
